@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { useDropzone } from 'react-dropzone'
-import { listFiles, uploadFile } from '../services/api'
+import { listFiles, uploadFile, compressPdf, exportImages, applyOcr, fetchPdfBlob } from '../services/api'
+import { toast } from 'sonner'
+import { PanelLeftClose, PanelLeftOpen, UploadCloud } from 'lucide-react'
 
 import FileList from '../components/FileList'
 import Toolbar from '../components/Toolbar'
@@ -9,10 +11,15 @@ import AnnotationLayer from '../components/AnnotationLayer'
 import TextEditLayer from '../components/TextEditLayer'
 import SignaturePanel from '../components/SignaturePanel'
 import MergeSplitPanel from '../components/MergeSplitPanel'
+import MetadataPanel from '../components/MetadataPanel'
 import { AppLogo, Button } from '../components/ui/index.js'
+import UserMenu from '../components/UserMenu'
+import PaywallModal from '../components/PaywallModal'
+import OnboardingTooltip from '../components/OnboardingTooltip'
 
 export default function EditorPage() {
   const [files, setFiles] = useState([])
+  const [filesLoading, setFilesLoading] = useState(true)
   const [activeFile, setActiveFile] = useState(null)
   const [currentPage, setCurrentPage] = useState(1)
   const [totalPages, setTotalPages] = useState(0)
@@ -21,6 +28,9 @@ export default function EditorPage() {
   const [pdfUrl, setPdfUrl] = useState(null)
   const [textItems, setTextItems] = useState([])
   const [textViewport, setTextViewport] = useState(null)
+  const [paywallMsg, setPaywallMsg] = useState(null)
+  const [sidebarOpen, setSidebarOpen] = useState(true)
+  const [toolbarCollapsed, setToolbarCollapsed] = useState(false)
 
   const handleTextItems = useCallback((items, vp) => {
     setTextItems(items)
@@ -30,9 +40,21 @@ export default function EditorPage() {
   const refresh = useCallback(async () => {
     const data = await listFiles()
     setFiles(data)
+    setFilesLoading(false)
   }, [])
 
   useEffect(() => { refresh() }, [refresh])
+
+  useEffect(() => {
+    const handler = (e) => setPaywallMsg(e.detail || 'Crédits insuffisants.')
+    window.addEventListener('paywall', handler)
+    return () => window.removeEventListener('paywall', handler)
+  }, [])
+
+  const loadPdf = useCallback(async (f) => {
+    const blobUrl = await fetchPdfBlob(f.id)
+    setPdfUrl(prev => { if (prev?.startsWith('blob:')) URL.revokeObjectURL(prev); return blobUrl })
+  }, [])
 
   const handleSelectFile = (f) => {
     setActiveFile(f)
@@ -41,24 +63,31 @@ export default function EditorPage() {
     setCanvasSize(null)
     setTextItems([])
     setTextViewport(null)
-    setPdfUrl(`${f.url}?v=${Date.now()}`)
     setActiveTool('select')
+    loadPdf(f)
   }
 
-  const handleSaved = () => {
+  const handleSaved = useCallback(async () => {
     if (activeFile) {
       setTextItems([])
       setTextViewport(null)
-      setPdfUrl(`${activeFile.url}?v=${Date.now()}`)
+      const updated = await listFiles()
+      setFiles(updated)
+      const f = updated.find(x => x.id === activeFile.id)
+      if (f) loadPdf(f)
     }
-  }
+  }, [activeFile, loadPdf])
 
   const onDrop = useCallback(async (acceptedFiles) => {
     for (const file of acceptedFiles) {
-      const result = await uploadFile(file)
-      setFiles(prev => [result, ...prev])
+      try {
+        await uploadFile(file)
+        await refresh()
+      } catch (err) {
+        if (err.response?.status === 402) setPaywallMsg(err.response?.data?.detail)
+      }
     }
-  }, [])
+  }, [refresh])
 
   const { getRootProps, getInputProps, isDragActive, open } = useDropzone({
     onDrop,
@@ -67,9 +96,44 @@ export default function EditorPage() {
     noKeyboard: true,
   })
 
-  const showSignPanel  = activeTool === 'sign'  && activeFile
+  const handleToolChange = async (tool) => {
+    if (tool === 'compress' && activeFile) {
+      try {
+        const r = await compressPdf(activeFile.id)
+        toast.success(`Compressé — réduit de ${r.ratio}%`)
+        handleSaved()
+      } catch {}
+      return
+    }
+    if (tool === 'export' && activeFile) {
+      try {
+        const r = await exportImages(activeFile.id)
+        const bin = atob(r.zip_b64)
+        const bytes = new Uint8Array(bin.length).map((_, i) => bin.charCodeAt(i))
+        const blob = new Blob([bytes], { type: 'application/zip' })
+        const a = document.createElement('a')
+        a.href = URL.createObjectURL(blob)
+        a.download = `${activeFile.name.replace('.pdf', '')}_images.zip`
+        a.click()
+        toast.success(`${r.pages} pages exportées`)
+      } catch {}
+      return
+    }
+    if (tool === 'ocr' && activeFile) {
+      try {
+        await applyOcr(activeFile.id)
+        toast.success('OCR appliqué')
+        handleSaved()
+      } catch {}
+      return
+    }
+    setActiveTool(tool)
+  }
+
+  const showSignPanel  = activeTool === 'sign'     && activeFile
+  const showMetaPanel  = activeTool === 'metadata' && activeFile
   const showMergePanel = activeTool === 'merge'
-  const showSplitPanel = activeTool === 'split' && activeFile
+  const showSplitPanel = activeTool === 'split'    && activeFile
 
   return (
     <div {...getRootProps()} className="h-screen flex flex-col overflow-hidden bg-surface-base">
@@ -77,79 +141,97 @@ export default function EditorPage() {
 
       {/* Drag overlay */}
       {isDragActive && (
-        <div className="fixed inset-0 bg-white/80 backdrop-blur-sm border-2 border-dashed border-brand/60 flex flex-col items-center justify-center z-50 gap-4 pointer-events-none">
-          <div className="flex items-center justify-center w-16 h-16 rounded-2xl bg-brand/10 border border-brand/25">
-            <svg width="28" height="32" viewBox="0 0 28 32" fill="none">
-              <path d="M14 20V8M14 8l-5 5M14 8l5 5" stroke="#00b386" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-              <path d="M4 24h20" stroke="#00b386" strokeWidth="2" strokeLinecap="round"/>
-            </svg>
+        <div className="fixed inset-0 bg-white/85 backdrop-blur-sm border-2 border-dashed border-brand/50 flex flex-col items-center justify-center z-50 gap-4 pointer-events-none">
+          <div className="w-14 h-14 rounded-2xl bg-brand-light border border-brand/20 flex items-center justify-center">
+            <UploadCloud size={24} className="text-brand" />
           </div>
-          <p className="text-brand font-semibold text-sm">Déposez votre PDF ici</p>
+          <p className="text-sm font-semibold text-brand">Déposez votre PDF ici</p>
         </div>
       )}
 
       {/* Header */}
-      <header className="flex items-center gap-3 px-5 bg-white border-b border-border shadow-header shrink-0" style={{height:'52px'}}>
+      <header className="flex items-center gap-3 px-4 bg-white border-b border-border shadow-header shrink-0" style={{ height: 48 }}>
+        {/* Sidebar toggle */}
+        <button
+          onClick={() => setSidebarOpen(o => !o)}
+          className="p-1.5 rounded-lg text-ink-muted hover:text-ink hover:bg-surface-raised transition-colors"
+          aria-label={sidebarOpen ? 'Masquer les fichiers' : 'Afficher les fichiers'}
+        >
+          {sidebarOpen ? <PanelLeftClose size={16} /> : <PanelLeftOpen size={16} />}
+        </button>
+
         <AppLogo />
+
         {activeFile && (
           <>
-            <div className="w-px h-4 bg-border mx-1" />
-            <span className="text-xs text-ink-muted truncate max-w-[240px]" title={activeFile.name}>
+            <span className="text-border-strong select-none">/</span>
+            <span className="text-xs text-ink-muted truncate max-w-[200px]" title={activeFile.name}>
               {activeFile.name}
             </span>
           </>
         )}
-        <div className="ml-auto">
+
+        <div className="ml-auto flex items-center gap-2">
           <Button variant="primary" size="sm" onClick={open}>
-            + Importer PDF
+            <UploadCloud size={13} /> Importer
           </Button>
+          <UserMenu />
         </div>
       </header>
 
-      {/* Toolbar */}
-      <Toolbar
-        activeTool={activeTool}
-        onToolChange={setActiveTool}
-        currentPage={currentPage}
-        totalPages={totalPages}
-        onPrevPage={() => setCurrentPage(p => Math.max(1, p - 1))}
-        onNextPage={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-        hasFile={!!activeFile}
-      />
-
       {/* Body */}
       <div className="flex flex-1 overflow-hidden">
-        <FileList
-          files={files}
-          activeId={activeFile?.id}
-          onSelect={handleSelectFile}
-          onRefresh={refresh}
+
+        {/* Vertical toolbar */}
+        <Toolbar
+          activeTool={activeTool}
+          onToolChange={handleToolChange}
+          currentPage={currentPage}
+          totalPages={totalPages}
+          onPrevPage={() => setCurrentPage(p => Math.max(1, p - 1))}
+          onNextPage={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+          hasFile={!!activeFile}
+          collapsed={toolbarCollapsed}
         />
 
-        <div className="flex flex-col flex-1 overflow-hidden">
+        {/* Sidebar */}
+        <div
+          className="overflow-hidden transition-all duration-200 ease-in-out shrink-0"
+          style={{ width: sidebarOpen ? 232 : 0 }}
+        >
+          <FileList
+            files={files}
+            activeId={activeFile?.id}
+            onSelect={handleSelectFile}
+            onRefresh={refresh}
+            onUpload={open}
+            loading={filesLoading}
+          />
+        </div>
 
-          {/* Viewer or empty state */}
+        {/* Main viewer area */}
+        <div className="flex flex-col flex-1 overflow-hidden">
           {!pdfUrl ? (
-            <div className="flex-1 viewer-bg flex flex-col items-center justify-center gap-6 select-none">
-              <div className="flex items-center justify-center w-20 h-20 rounded-3xl bg-white border border-border shadow-card">
-                <svg width="36" height="42" viewBox="0 0 36 42" fill="none" aria-hidden="true">
-                  <rect x="1.5" y="1.5" width="33" height="39" rx="3.5" stroke="#cbc7bd" strokeWidth="1.5"/>
-                  <path d="M21 1.5v9.5h9" stroke="#cbc7bd" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-                  <path d="M8 21h20M8 27h14M8 33h10" stroke="#00b386" strokeWidth="1.5" strokeLinecap="round"/>
+            <div className="flex-1 viewer-bg flex flex-col items-center justify-center gap-5 select-none">
+              <div className="w-16 h-16 rounded-2xl bg-white border border-border shadow-card flex items-center justify-center">
+                <svg width="32" height="38" viewBox="0 0 32 38" fill="none">
+                  <rect x="1.5" y="1.5" width="29" height="35" rx="3" stroke="#d1d5db" strokeWidth="1.5"/>
+                  <path d="M19 1.5v8.5h8" stroke="#d1d5db" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                  <path d="M7 19h18M7 24.5h13M7 30h9" stroke="#00b386" strokeWidth="1.5" strokeLinecap="round"/>
                 </svg>
               </div>
               <div className="text-center">
                 <p className="text-sm font-semibold text-ink">Aucun document ouvert</p>
-                <p className="text-xs text-ink-muted mt-1.5">Sélectionnez un fichier ou importez un nouveau PDF</p>
+                <p className="text-xs text-ink-muted mt-1">Sélectionnez un fichier ou importez un PDF</p>
               </div>
               <Button variant="primary" size="md" onClick={open}>
-                + Importer un PDF
+                <UploadCloud size={14} /> Importer un PDF
               </Button>
-              <p className="text-2xs text-ink-faint">ou glissez-déposez un fichier n&apos;importe où</p>
+              <p className="text-2xs text-ink-faint">ou glissez-déposez un fichier n'importe où</p>
             </div>
           ) : (
             <div className="flex-1 overflow-auto p-8 flex justify-center items-start viewer-bg">
-              <div className="relative inline-block shadow-pdf">
+              <div className="relative inline-block shadow-pdf rounded-sm">
                 <PDFViewer
                   fileUrl={pdfUrl}
                   currentPage={currentPage}
@@ -180,32 +262,23 @@ export default function EditorPage() {
             </div>
           )}
 
-          {/* Panneaux contextuels */}
+          {/* Contextual panels */}
           {showSignPanel && (
-            <SignaturePanel
-              fileId={activeFile.id}
-              currentPage={currentPage}
-              onSaved={handleSaved}
-            />
+            <SignaturePanel fileId={activeFile.id} currentPage={currentPage} onSaved={handleSaved} />
+          )}
+          {showMetaPanel && (
+            <MetadataPanel fileId={activeFile.id} onSaved={handleSaved} onClose={() => setActiveTool('select')} />
           )}
           {showMergePanel && (
-            <MergeSplitPanel
-              mode="merge"
-              file={activeFile}
-              allFiles={files}
-              onRefresh={refresh}
-            />
+            <MergeSplitPanel mode="merge" file={activeFile} allFiles={files} onRefresh={refresh} />
           )}
           {showSplitPanel && (
-            <MergeSplitPanel
-              mode="split"
-              file={activeFile}
-              allFiles={files}
-              onRefresh={refresh}
-            />
+            <MergeSplitPanel mode="split" file={activeFile} allFiles={files} onRefresh={refresh} />
           )}
         </div>
       </div>
+
+      <PaywallModal isOpen={!!paywallMsg} onClose={() => setPaywallMsg(null)} message={paywallMsg} />
     </div>
   )
 }

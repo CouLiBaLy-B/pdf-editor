@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import base64
 import io
+import uuid
+import zipfile
 from pathlib import Path
 from typing import Optional
 
@@ -12,209 +14,196 @@ import fitz  # PyMuPDF
 from PIL import Image as PILImage
 
 
-def _open(file_id: str) -> tuple[fitz.Document, Path]:
-    from services.storage import get_file_path
-
-    folder = get_file_path(file_id)
-    pdf_path = folder / "document.pdf"
-    if not pdf_path.exists():
-        raise FileNotFoundError(f"PDF {file_id} introuvable")
-    doc = fitz.open(str(pdf_path))
-    return doc, pdf_path
+def _open(file_id: str) -> fitz.Document:
+    from services.r2_storage import download_file
+    content = download_file(file_id)
+    return fitz.open(stream=content, filetype="pdf")
 
 
-def _save(doc: fitz.Document, path: Path, clean: bool = False) -> None:
+def _save(doc: fitz.Document, file_id: str, clean: bool = False) -> None:
+    from services.r2_storage import upload_file
     if clean:
-        # Impossible d'écrire dans le même fichier en mode non-incrémental :
-        # on sérialise en mémoire puis on écrase le fichier.
         buf = doc.tobytes(garbage=4, deflate=True)
-        doc.close()
-        path.write_bytes(buf)
     else:
-        doc.save(str(path), incremental=True, encryption=fitz.PDF_ENCRYPT_KEEP)
-        doc.close()
+        buf = doc.tobytes(incremental=True, encryption=fitz.PDF_ENCRYPT_KEEP)
+    doc.close()
+    upload_file(file_id, buf)
 
 
 # ─── Ajout de texte ───────────────────────────────────────────────────────────
 
-def add_text(
-    file_id: str,
-    page_number: int,
-    x: float,
-    y: float,
-    text: str,
-    font_size: float = 12,
-    color: tuple[float, float, float] = (0, 0, 0),
-) -> None:
-    doc, path = _open(file_id)
+def add_text(file_id, page_number, x, y, text, font_size=12, color=(0, 0, 0)):
+    doc = _open(file_id)
+    doc[page_number].insert_text((x, y), text, fontsize=font_size, color=color)
+    _save(doc, file_id)
+
+
+# ─── Remplacement de texte ────────────────────────────────────────────────────
+
+def replace_text(file_id, page_number, x_pdf, y_pdf_baseline, width_pdf, new_text, font_size=12, color=(0, 0, 0)):
+    doc = _open(file_id)
     page = doc[page_number]
-    page.insert_text(
-        (x, y),
-        text,
-        fontsize=font_size,
-        color=color,
-    )
-    _save(doc, path)
-
-
-# ─── Remplacement de texte existant ─────────────────────────────────────────
-
-def replace_text(
-    file_id: str,
-    page_number: int,
-    x_pdf: float,
-    y_pdf_baseline: float,
-    width_pdf: float,
-    new_text: str,
-    font_size: float = 12,
-    color: tuple = (0, 0, 0),
-) -> None:
-    """
-    Efface le texte original (rectangle blanc) puis insère le nouveau texte.
-    y_pdf_baseline : y de la baseline en coordonnées PDF.js (origine bas-gauche).
-    """
-    doc, path = _open(file_id)
-    page = doc[page_number]
-    page_height = page.rect.height  # hauteur en coords PyMuPDF (origine haut-gauche)
-
-    # Conversion : PDF.js y-up → PyMuPDF y-down
-    baseline_y = page_height - y_pdf_baseline
-
-    # Rectangle couvrant le texte original
-    rect = fitz.Rect(
-        x_pdf - 1,
-        baseline_y - font_size * 0.95,
-        x_pdf + width_pdf + 4,
-        baseline_y + font_size * 0.3,
-    )
-
-    # Masquer l'ancien texte avec un rectangle blanc
+    baseline_y = page.rect.height - y_pdf_baseline
+    rect = fitz.Rect(x_pdf - 1, baseline_y - font_size * 0.95, x_pdf + width_pdf + 4, baseline_y + font_size * 0.3)
     page.draw_rect(rect, color=(1, 1, 1), fill=(1, 1, 1))
-
-    # Insérer le nouveau texte
-    page.insert_text(
-        fitz.Point(x_pdf, baseline_y),
-        new_text,
-        fontsize=font_size,
-        color=color,
-    )
-
-    _save(doc, path, clean=True)
+    page.insert_text(fitz.Point(x_pdf, baseline_y), new_text, fontsize=font_size, color=color)
+    _save(doc, file_id, clean=True)
 
 
-# ─── Annotation / Surlignage ──────────────────────────────────────────────────
+# ─── Surlignage ───────────────────────────────────────────────────────────────
 
-def add_highlight(
-    file_id: str,
-    page_number: int,
-    quads: list[list[float]],  # liste de [x0,y0,x1,y1]
-    color: tuple[float, float, float] = (1, 1, 0),
-) -> None:
-    doc, path = _open(file_id)
+def add_highlight(file_id, page_number, quads, color=(1, 1, 0)):
+    doc = _open(file_id)
     page = doc[page_number]
     for rect_coords in quads:
-        rect = fitz.Rect(*rect_coords)
-        annot = page.add_highlight_annot(rect)
+        annot = page.add_highlight_annot(fitz.Rect(*rect_coords))
         annot.set_colors(stroke=color)
         annot.update()
-    _save(doc, path)
+    _save(doc, file_id)
 
 
-# ─── Insertion d'image ────────────────────────────────────────────────────────
+# ─── Image ────────────────────────────────────────────────────────────────────
 
-def add_image(
-    file_id: str,
-    page_number: int,
-    x0: float,
-    y0: float,
-    x1: float,
-    y1: float,
-    image_bytes: bytes,
-) -> None:
-    doc, path = _open(file_id)
-    page = doc[page_number]
-    rect = fitz.Rect(x0, y0, x1, y1)
-    page.insert_image(rect, stream=image_bytes)
-    _save(doc, path)
+def add_image(file_id, page_number, x0, y0, x1, y1, image_bytes):
+    doc = _open(file_id)
+    doc[page_number].insert_image(fitz.Rect(x0, y0, x1, y1), stream=image_bytes)
+    _save(doc, file_id)
+
+
+# ─── Signature ────────────────────────────────────────────────────────────────
+
+def add_signature(file_id, page_number, x0, y0, x1, y1, signature_b64):
+    add_image(file_id, page_number, x0, y0, x1, y1, base64.b64decode(signature_b64))
 
 
 # ─── Fusion ───────────────────────────────────────────────────────────────────
 
-def merge_pdfs(file_ids: list[str], output_id: str) -> dict:
-    from services.storage import get_file_path, UPLOAD_DIR
-    import uuid
-
+def merge_pdfs(file_ids: list[str], _output_id: str) -> dict:
+    from services.r2_storage import upload_file
     result = fitz.open()
     for fid in file_ids:
-        p = get_file_path(fid) / "document.pdf"
-        src = fitz.open(str(p))
+        src = _open(fid)
         result.insert_pdf(src)
         src.close()
-
     new_id = str(uuid.uuid4())
-    out_folder = UPLOAD_DIR / new_id
-    out_folder.mkdir(parents=True, exist_ok=True)
-    out_path = out_folder / "document.pdf"
-    result.save(str(out_path))
+    upload_file(new_id, result.tobytes(garbage=4, deflate=True))
     result.close()
-    (out_folder / "meta.txt").write_text("merged.pdf")
-
-    return {
-        "id": new_id,
-        "name": "merged.pdf",
-        "url": f"/uploads/{new_id}/document.pdf",
-    }
+    return {"id": new_id, "name": "merged.pdf"}
 
 
 # ─── Division ─────────────────────────────────────────────────────────────────
 
 def split_pdf(file_id: str, page_ranges: list[list[int]]) -> list[dict]:
-    """
-    page_ranges : liste de [start, end] (index 0-based inclusifs)
-    Retourne la liste des nouveaux fichiers créés.
-    """
-    from services.storage import get_file_path, UPLOAD_DIR
-    import uuid
-
-    src_doc, _ = _open(file_id)
+    from services.r2_storage import upload_file
+    src_doc = _open(file_id)
     results = []
-
     for i, (start, end) in enumerate(page_ranges):
-        new_id = str(uuid.uuid4())
-        out_folder = UPLOAD_DIR / new_id
-        out_folder.mkdir(parents=True, exist_ok=True)
-        out_path = out_folder / "document.pdf"
-
         part = fitz.open()
         part.insert_pdf(src_doc, from_page=start, to_page=end)
-        part.save(str(out_path))
+        new_id = str(uuid.uuid4())
+        upload_file(new_id, part.tobytes(garbage=4, deflate=True))
         part.close()
-
-        name = f"part_{i + 1}.pdf"
-        (out_folder / "meta.txt").write_text(name)
-        results.append({
-            "id": new_id,
-            "name": name,
-            "url": f"/uploads/{new_id}/document.pdf",
-        })
-
+        results.append({"id": new_id, "name": f"part_{i + 1}.pdf"})
     src_doc.close()
     return results
 
 
-# ─── Signature ────────────────────────────────────────────────────────────────
+# ─── Compression ─────────────────────────────────────────────────────────────
 
-def add_signature(
-    file_id: str,
-    page_number: int,
-    x0: float,
-    y0: float,
-    x1: float,
-    y1: float,
-    signature_b64: str,
-) -> None:
-    """
-    signature_b64 : image PNG encodée en base64 (pureté sans préfixe data:)
-    """
-    image_bytes = base64.b64decode(signature_b64)
-    add_image(file_id, page_number, x0, y0, x1, y1, image_bytes)
+def compress_pdf(file_id: str) -> dict:
+    from services.r2_storage import download_file, upload_file
+    original = download_file(file_id)
+    doc = fitz.open(stream=original, filetype="pdf")
+    compressed = doc.tobytes(garbage=4, deflate=True, clean=True)
+    doc.close()
+    upload_file(file_id, compressed)
+    ratio = round((1 - len(compressed) / len(original)) * 100, 1)
+    return {"original_size": len(original), "compressed_size": len(compressed), "ratio": ratio}
+
+
+# ─── Export images ────────────────────────────────────────────────────────────
+
+def export_images(file_id: str) -> dict:
+    from fastapi.responses import StreamingResponse
+    doc = _open(file_id)
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for i, page in enumerate(doc):
+            pix = page.get_pixmap(dpi=150)
+            zf.writestr(f"page_{i + 1}.png", pix.tobytes("png"))
+    page_count = len(doc)
+    doc.close()
+    buf.seek(0)
+    # Retourner le ZIP encodé en base64 pour le frontend
+    return {"zip_b64": base64.b64encode(buf.read()).decode(), "pages": page_count}
+
+
+# ─── OCR ─────────────────────────────────────────────────────────────────────
+
+def apply_ocr(file_id: str) -> None:
+    import pytesseract
+    from services.r2_storage import upload_file
+    doc = _open(file_id)
+    out = fitz.open()
+    for page in doc:
+        pix = page.get_pixmap(dpi=200)
+        img = PILImage.frombytes("RGB", [pix.width, pix.height], pix.samples)
+        ocr_pdf_bytes = pytesseract.image_to_pdf_or_hocr(img, extension="pdf")
+        ocr_page = fitz.open(stream=ocr_pdf_bytes, filetype="pdf")
+        out.insert_pdf(ocr_page)
+        ocr_page.close()
+    doc.close()
+    upload_file(file_id, out.tobytes(garbage=4, deflate=True))
+    out.close()
+
+
+# ─── Métadonnées ──────────────────────────────────────────────────────────────
+
+def _from_pdf_date(pdf_str: str) -> str:
+    if not pdf_str:
+        return ""
+    s = pdf_str.strip()
+    if s.startswith("D:"):
+        s = s[2:]
+    digits = "".join(c for c in s if c.isdigit())
+    if len(digits) < 8:
+        return ""
+    return f"{digits[0:4]}-{digits[4:6]}-{digits[6:8]}T{digits[8:10] if len(digits)>=10 else '00'}:{digits[10:12] if len(digits)>=12 else '00'}"
+
+
+def _to_pdf_date(iso_str: str) -> str:
+    if not iso_str:
+        return ""
+    digits = "".join(c for c in iso_str if c.isdigit())
+    if len(digits) < 8:
+        return ""
+    y, mo, d = digits[0:4], digits[4:6], digits[6:8]
+    h, mi, s = digits[8:10] if len(digits)>=10 else "00", digits[10:12] if len(digits)>=12 else "00", digits[12:14] if len(digits)>=14 else "00"
+    return f"D:{y}{mo}{d}{h}{mi}{s}+00'00'"
+
+
+def get_metadata(file_id: str) -> dict:
+    doc = _open(file_id)
+    raw = doc.metadata
+    doc.close()
+    return {
+        "title": raw.get("title", ""), "author": raw.get("author", ""),
+        "subject": raw.get("subject", ""), "keywords": raw.get("keywords", ""),
+        "creation_date": _from_pdf_date(raw.get("creationDate", "")),
+        "mod_date": _from_pdf_date(raw.get("modDate", "")),
+    }
+
+
+def set_metadata(file_id: str, metadata: dict) -> None:
+    doc = _open(file_id)
+    existing = doc.metadata
+    doc.set_metadata({
+        "title": metadata.get("title", existing.get("title", "")),
+        "author": metadata.get("author", existing.get("author", "")),
+        "subject": metadata.get("subject", existing.get("subject", "")),
+        "keywords": metadata.get("keywords", existing.get("keywords", "")),
+        "creationDate": _to_pdf_date(metadata.get("creation_date", "")) or existing.get("creationDate", ""),
+        "modDate": _to_pdf_date(metadata.get("mod_date", "")) or existing.get("modDate", ""),
+        "creator": existing.get("creator", ""), "producer": existing.get("producer", ""),
+    })
+    _save(doc, file_id, clean=True)

@@ -5,32 +5,55 @@
 @layer base {
   *, *::before, *::after { box-sizing: border-box; }
   html { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
-  body { background: #f0ede6; color: #1a1a2e; }
-  ::selection { background: rgba(0,179,134,0.22); color: #1a1a2e; }
+  body { background: #f9fafb; color: #111827; }
+  ::selection { background: rgba(0,179,134,0.20); color: #111827; }
 }
 
-/* Scrollbar */
 ::-webkit-scrollbar       { width: 5px; height: 5px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.14); border-radius: 99px; }
-::-webkit-scrollbar-thumb:hover { background: rgba(0,179,134,0.45); }
+::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.12); border-radius: 99px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(0,179,134,0.40); }
 
-/* Spinner */
 .spinner {
-  width: 36px;
-  height: 36px;
-  border: 3px solid rgba(0,0,0,0.08);
+  width: 32px; height: 32px;
+  border: 2.5px solid rgba(0,0,0,0.07);
   border-top-color: #00b386;
   border-radius: 50%;
-  animation: spin 0.7s linear infinite;
+  animation: spin 0.65s linear infinite;
   margin: auto;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-/* Subtle checker viewer background */
 .viewer-bg {
-  background-color: #e8e4db;
-  background-image:
-    radial-gradient(circle, rgba(0,0,0,0.06) 1px, transparent 1px);
-  background-size: 22px 22px;
+  background-color: #f1f3f5;
+  background-image: radial-gradient(circle, rgba(0,0,0,0.05) 1px, transparent 1px);
+  background-size: 20px 20px;
+}
+
+/* Tooltip for collapsed toolbar */
+.tool-tooltip {
+  position: absolute;
+  left: calc(100% + 10px);
+  top: 50%;
+  transform: translateY(-50%);
+  background: #111827;
+  color: #fff;
+  font-size: 0.7rem;
+  font-weight: 500;
+  padding: 4px 8px;
+  border-radius: 6px;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s;
+  z-index: 100;
+}
+.tool-tooltip::before {
+  content: '';
+  position: absolute;
+  right: 100%;
+  top: 50%;
+  transform: translateY(-50%);
+  border: 5px solid transparent;
+  border-right-color: #111827;
 }

@@ -1,8 +1,8 @@
-# PDFPro — Éditeur PDF
+# PDFPro — Éditeur PDF SaaS
 
-Éditeur PDF professionnel en ligne, conçu pour être autonome et déployable en un seul commande.
+Éditeur PDF professionnel en ligne, modèle pay-as-you-go (0,25€ par opération via crédits prépayés).
 
-![Stack](https://img.shields.io/badge/React-18-61DAFB?logo=react) ![Stack](https://img.shields.io/badge/FastAPI-0.110-009688?logo=fastapi) ![Stack](https://img.shields.io/badge/Tailwind-3-06B6D4?logo=tailwindcss) ![Stack](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker)
+![Stack](https://img.shields.io/badge/React-18-61DAFB?logo=react) ![Stack](https://img.shields.io/badge/FastAPI-0.110-009688?logo=fastapi) ![Stack](https://img.shields.io/badge/Tailwind-3-06B6D4?logo=tailwindcss) ![Stack](https://img.shields.io/badge/Railway-Deploy-0B0D0E?logo=railway)
 
 ---
 
@@ -10,84 +10,77 @@
 
 | Outil | Description |
 |-------|-------------|
-| **Texte** | Cliquez sur le PDF pour éditer le texte existant inline |
-| **Surlignage** | Sélectionnez une zone pour ajouter un surlignage jaune |
-| **Image** | Insérez une image à l'endroit de votre choix |
-| **Signature** | Dessinez et apposez une signature électronique |
-| **Combiner** | Fusionnez plusieurs PDFs en un seul document |
-| **Séparer** | Divisez un PDF en plusieurs parties par plages de pages |
+| **Texte** | Édition de texte inline sur le PDF |
+| **Surlignage** | Annotation jaune sur sélection |
+| **Image** | Insertion d'image à la position souhaitée |
+| **Signature** | Signature électronique dessinée |
+| **Combiner** | Fusion de plusieurs PDFs |
+| **Séparer** | Division par plages de pages |
+| **Compresser** | Réduction du poids du PDF |
+| **Exporter** | Export de chaque page en PNG (ZIP) |
+| **OCR** | Extraction de texte depuis PDFs scannés |
+
+---
+
+## Modèle économique
+
+- **1 crédit = 1 opération = 0,25€**
+- Achat de crédits en lot : 5€ (20 cr.) / 10€ (44 cr.) / 20€ (100 cr.)
+- Paiement via Stripe Checkout (one-time payment)
 
 ---
 
 ## Stack technique
 
-**Frontend**
-- React 18 + Vite 5
-- Tailwind CSS 3 (design system avec tokens de couleur)
-- Lucide React (icônes)
-- pdf.js (rendu PDF)
-- Fabric.js (canvas d'annotation)
-- Sonner (notifications toast)
+**Frontend** — React 18 + Vite + Tailwind CSS + pdf.js + Fabric.js
 
-**Backend**
-- FastAPI + Uvicorn
-- PyMuPDF (`fitz`) — manipulation PDF
-- Pillow — traitement image
-- Stockage fichier local (`/uploads`)
+**Backend** — FastAPI + PyMuPDF + PostgreSQL + SQLAlchemy + Alembic
+
+**Infra** — Railway (backend + frontend + PostgreSQL) + Cloudflare R2 (stockage)
 
 ---
 
-## Lancement rapide
-
-**Prérequis :** Docker + Docker Compose
+## Lancement local (Docker)
 
 ```bash
-git clone <repo-url>
-cd pdf-editor
+cp .env.example .env
+# Remplir les variables dans .env
 docker compose up --build
 ```
 
-L'application est disponible sur **http://localhost:5173**
+Application disponible sur **http://localhost:5173**
 
 ---
 
-## Structure du projet
+## Variables d'environnement
 
-```
-pdf-editor/
-├── backend/                  # API FastAPI
-│   ├── main.py               # Point d'entrée
-│   ├── routers/
-│   │   ├── files.py          # Upload / download / delete
-│   │   ├── edit.py           # Ajout texte & image
-│   │   ├── annotate.py       # Surlignage
-│   │   ├── merge_split.py    # Fusion & division
-│   │   └── sign.py           # Signature électronique
-│   ├── services/
-│   │   ├── pdf_service.py    # Logique PyMuPDF
-│   │   └── storage.py        # Gestion fichiers
-│   └── requirements.txt
-│
-├── frontend/                 # Application React
-│   ├── src/
-│   │   ├── pages/
-│   │   │   └── EditorPage.jsx     # Page principale
-│   │   ├── components/
-│   │   │   ├── ui/                # Primitives (Button, Panel, Badge…)
-│   │   │   ├── Toolbar.jsx        # Barre d'outils
-│   │   │   ├── FileList.jsx       # Sidebar fichiers
-│   │   │   ├── PDFViewer.jsx      # Rendu pdf.js
-│   │   │   ├── AnnotationLayer.jsx # Canvas Fabric.js
-│   │   │   ├── TextEditLayer.jsx  # Édition texte inline
-│   │   │   ├── SignaturePanel.jsx # Panneau signature
-│   │   │   └── MergeSplitPanel.jsx # Panneau fusion/division
-│   │   └── services/
-│   │       └── api.js             # Client Axios
-│   ├── tailwind.config.js    # Design tokens
-│   └── package.json
-│
-└── docker-compose.yml
-```
+| Variable | Description |
+|----------|-------------|
+| `SECRET_KEY` | Clé secrète JWT (générer avec `openssl rand -hex 32`) |
+| `DATABASE_URL` | URL PostgreSQL (ex: `postgresql://user:pass@host:5432/db`) |
+| `STRIPE_SECRET_KEY` | Clé secrète Stripe (`sk_live_...`) |
+| `STRIPE_WEBHOOK_SECRET` | Secret webhook Stripe (`whsec_...`) |
+| `R2_ACCOUNT_ID` | ID de compte Cloudflare |
+| `R2_ACCESS_KEY` | Access key R2 |
+| `R2_SECRET_KEY` | Secret key R2 |
+| `R2_BUCKET` | Nom du bucket R2 |
+| `R2_PUBLIC_URL` | URL publique du bucket R2 |
+| `RESEND_API_KEY` | Clé API Resend pour les emails |
+| `FROM_EMAIL` | Expéditeur des emails (ex: `PDFPro <noreply@pdfpro.app>`) |
+| `FRONTEND_URL` | URL du frontend (ex: `https://pdfpro.app`) |
+| `ALLOWED_ORIGINS` | CORS origins séparées par virgule |
+| `SENTRY_DSN` | DSN Sentry pour le monitoring (optionnel) |
+
+---
+
+## Déploiement Railway
+
+1. Créer un projet Railway avec 3 services : `backend`, `frontend`, `postgres`
+2. Ajouter toutes les variables d'environnement ci-dessus dans chaque service
+3. Configurer le webhook Stripe : `https://<backend-url>/api/billing/webhook`
+4. Ajouter `RAILWAY_TOKEN` dans les secrets GitHub pour le CI/CD automatique
+
+Le déploiement se fait automatiquement à chaque push sur `main`.
 
 ---
 
@@ -95,41 +88,25 @@ pdf-editor/
 
 | Méthode | Endpoint | Description |
 |---------|----------|-------------|
+| `POST` | `/api/auth/register` | Inscription |
+| `POST` | `/api/auth/login` | Connexion |
+| `GET` | `/api/auth/me` | Profil + solde crédits |
 | `GET` | `/api/files/` | Lister les fichiers |
 | `POST` | `/api/files/upload` | Uploader un PDF |
-| `GET` | `/api/files/{id}/download` | Télécharger un fichier |
-| `DELETE` | `/api/files/{id}` | Supprimer un fichier |
-| `POST` | `/api/files/{id}/add-text` | Ajouter du texte |
-| `POST` | `/api/files/{id}/add-image` | Insérer une image |
-| `POST` | `/api/files/{id}/highlight` | Ajouter un surlignage |
-| `POST` | `/api/files/{id}/sign` | Apposer une signature |
-| `POST` | `/api/merge` | Fusionner des PDFs |
-| `POST` | `/api/files/{id}/split` | Diviser un PDF |
+| `GET` | `/api/files/{id}/download` | Télécharger |
+| `DELETE` | `/api/files/{id}` | Supprimer |
+| `POST` | `/api/files/{id}/add-text` | Ajouter texte (1 crédit) |
+| `POST` | `/api/files/{id}/add-image` | Insérer image (1 crédit) |
+| `POST` | `/api/files/{id}/highlight` | Surligner (1 crédit) |
+| `POST` | `/api/files/{id}/sign` | Signer (1 crédit) |
+| `POST` | `/api/files/{id}/compress` | Compresser (1 crédit) |
+| `POST` | `/api/files/{id}/export-images` | Exporter en PNG (1 crédit) |
+| `POST` | `/api/files/{id}/ocr` | OCR (1 crédit) |
+| `POST` | `/api/merge` | Fusionner (1 crédit) |
+| `POST` | `/api/files/{id}/split` | Diviser (1 crédit) |
+| `POST` | `/api/billing/topup` | Acheter des crédits |
+| `GET` | `/api/billing/balance` | Solde de crédits |
+| `GET` | `/api/billing/history` | Historique transactions |
+| `POST` | `/api/billing/webhook` | Webhook Stripe |
 
 Documentation interactive : **http://localhost:8000/docs**
-
----
-
-## Développement local
-
-```bash
-# Backend uniquement
-cd backend
-pip install -r requirements.txt
-uvicorn main:app --reload --port 8000
-
-# Frontend uniquement
-cd frontend
-npm install
-npm run dev
-```
-
----
-
-## Variables d'environnement
-
-| Variable | Défaut | Description |
-|----------|--------|-------------|
-| `PYTHONUNBUFFERED` | `1` | Logs Python non bufférisés |
-
-Les fichiers uploadés sont persistés dans le volume Docker `uploads_data`.
