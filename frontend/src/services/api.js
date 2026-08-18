@@ -91,3 +91,16 @@ export const shareFile = (id) => api.post(`/files/${id}/share`).then(r => r.data
 export const compressPdf = (id) => api.post(`/files/${id}/compress`).then(r => r.data)
 export const exportImages = (id) => api.post(`/files/${id}/export-images`).then(r => r.data)
 export const applyOcr = (id) => api.post(`/files/${id}/ocr`).then(r => r.data)
+
+// ── Pages ─────────────────────────────────────────────────────────────────────
+export const rotatePage = (id, page, degrees) => 
+  api.post(`/files/${id}/rotate-page`, { page, degrees }).then(r => r.data)
+
+export const rotateAllPages = (id, degrees) => 
+  api.post(`/files/${id}/rotate-all`, { degrees }).then(r => r.data)
+
+export const deletePages = (id, pages) => 
+  api.post(`/files/${id}/delete-pages`, { pages }).then(r => r.data)
+
+export const reorderPages = (id, newOrder) => 
+  api.post(`/files/${id}/reorder-pages`, { new_order: newOrder }).then(r => r.data)

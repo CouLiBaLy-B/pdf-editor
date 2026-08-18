@@ -2,7 +2,7 @@ import React, { useState } from 'react'
 import {
   MousePointer2, Type, Highlighter, Image as ImageIcon, PenLine,
   Link2, Scissors, FileText, Minimize2, ImageDown, ScanText,
-  ChevronLeft, ChevronRight,
+  ChevronLeft, ChevronRight, FileStack,
 } from 'lucide-react'
 
 const GROUPS = [
@@ -13,7 +13,8 @@ const GROUPS = [
     { id: 'image',     Icon: ImageIcon,     label: 'Image'     },
   ],
   [
-    { id: 'sign',     Icon: PenLine,  label: 'Signer'      },
+    { id: 'pages',   Icon: FileStack, label: 'Pages'     },
+    { id: 'sign',    Icon: PenLine,   label: 'Signer'   },
     { id: 'metadata', Icon: FileText, label: 'Métadonnées' },
   ],
   [
@@ -62,7 +63,7 @@ function ToolBtn({ id, Icon, label, isActive, isDisabled, collapsed, onClick }) 
 export default function Toolbar({
   activeTool, onToolChange,
   currentPage, totalPages, onPrevPage, onNextPage,
-  hasFile, collapsed,
+  hasFile, collapsed, canUndo, canRedo,
 }) {
   return (
     <nav

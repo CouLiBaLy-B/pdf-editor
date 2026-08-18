@@ -207,3 +207,126 @@ def set_metadata(file_id: str, metadata: dict) -> None:
         "creator": existing.get("creator", ""), "producer": existing.get("producer", ""),
     })
     _save(doc, file_id, clean=True)
+
+
+# ─── Rotation de pages ────────────────────────────────────────────────────────
+
+def rotate_page(file_id: str, page_number: int, degrees: int) -> None:
+    """
+    Rotate a single page by the specified degrees.
+    
+    Args:
+        file_id: The PDF file ID
+        page_number: 0-based page index
+        degrees: Rotation angle (90, 180, or 270)
+    """
+    doc = _open(file_id)
+    
+    if page_number < 0 or page_number >= len(doc):
+        doc.close()
+        raise ValueError(f"Page {page_number + 1} invalide (document a {len(doc)} pages)")
+    
+    page = doc[page_number]
+    page.set_rotation(degrees)
+    _save(doc, file_id, clean=True)
+
+
+def rotate_all_pages(file_id: str, degrees: int) -> None:
+    """
+    Rotate all pages in the PDF by the same angle.
+    
+    Args:
+        file_id: The PDF file ID
+        degrees: Rotation angle (90, 180, or 270)
+    """
+    doc = _open(file_id)
+    
+    for page in doc:
+        page.set_rotation(degrees)
+    
+    _save(doc, file_id, clean=True)
+
+
+# ─── Suppression de pages ─────────────────────────────────────────────────────
+
+def delete_pages(file_id: str, page_indices: list[int]) -> int:
+    """
+    Delete specified pages from the PDF.
+    
+    Args:
+        file_id: The PDF file ID
+        page_indices: List of 0-based page indices to delete
+    
+    Returns:
+        Number of remaining pages
+    """
+    doc = _open(file_id)
+    total_pages = len(doc)
+    
+    # Validate indices
+    for idx in page_indices:
+        if idx < 0 or idx >= total_pages:
+            doc.close()
+            raise ValueError(f"Page {idx + 1} invalide (document a {total_pages} pages)")
+    
+    # Remove duplicates and sort in reverse order
+    unique_indices = sorted(set(page_indices), reverse=True)
+    
+    # Check if we're trying to delete all pages
+    if len(unique_indices) >= total_pages:
+        doc.close()
+        raise ValueError("Impossible de supprimer toutes les pages du document")
+    
+    # Delete pages in reverse order to maintain correct indices
+    for idx in unique_indices:
+        doc.delete_page(idx)
+    
+    remaining = len(doc)
+    _save(doc, file_id, clean=True)
+    
+    return remaining
+
+
+# ─── Réorganisation de pages ──────────────────────────────────────────────────
+
+def reorder_pages(file_id: str, new_order: list[int]) -> None:
+    """
+    Reorder pages in the PDF according to new_order.
+    
+    Args:
+        file_id: The PDF file ID
+        new_order: List of 0-based page indices in the desired order
+    
+    Raises:
+        ValueError: If the order is invalid or incomplete
+    """
+    doc = _open(file_id)
+    total_pages = len(doc)
+    
+    # Validate new_order
+    if len(new_order) != total_pages:
+        doc.close()
+        raise ValueError(
+            f"Ordre incomplet: {len(new_order)} pages fournies, {total_pages} attendues"
+        )
+    
+    # Check for valid indices and no duplicates
+    try:
+        sorted_indices = sorted(new_order)
+        if sorted_indices != list(range(total_pages)):
+            raise ValueError("Indices invalides ou dupliqués dans new_order")
+    except (TypeError, ValueError) as e:
+        doc.close()
+        raise ValueError(f"Ordre invalide: {e}")
+    
+    # Create a new PDF with pages in the specified order
+    from services.r2_storage import upload_file
+    
+    new_doc = fitz.open()
+    for idx in new_order:
+        new_doc.insert_pdf(doc, from_page=idx, to_page=idx)
+    
+    # Save the reordered document
+    upload_file(file_id, new_doc.tobytes(garbage=4, deflate=True))
+    doc.close()
+    new_doc.close()
