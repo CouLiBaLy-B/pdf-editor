@@ -51,12 +51,13 @@ def sanitize_filename(filename: str) -> str:
     if not name or name == '.pdf':
         name = f"document_{uuid.uuid4().hex[:8]}.pdf"
     
-    # Always ensure .pdf extension
-    if not name.lower().endswith('.pdf'):
-        # Remove any existing extension and add .pdf
-        name = re.sub(r'\.[^.]+$', '', name) + '.pdf'
-    
-    return name
+    # Toujours normaliser l'extension et conserver une longueur maximale de 255.
+    if name.lower().endswith('.pdf'):
+        name = name[:-4]
+    else:
+        name = re.sub(r'\.[^.]+$', '', name)
+    name = name[:251].rstrip('. ') or f"document_{uuid.uuid4().hex[:8]}"
+    return name + '.pdf'
 
 
 def validate_pdf_content(content: bytes) -> None:

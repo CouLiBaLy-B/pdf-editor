@@ -21,53 +21,118 @@ def _open(file_id: str) -> fitz.Document:
 
 
 def _save(doc: fitz.Document, file_id: str, clean: bool = False) -> None:
+    """Sérialise entièrement le document avant de remplacer l'original.
+
+    Les documents sont ouverts depuis un flux mémoire : une sauvegarde incrémentale
+    y est fragile et peut produire un PDF illisible selon sa structure d'origine.
+    """
     from services.r2_storage import upload_file
-    if clean:
-        buf = doc.tobytes(garbage=4, deflate=True)
-    else:
-        buf = doc.tobytes(incremental=True, encryption=fitz.PDF_ENCRYPT_KEEP)
-    doc.close()
+    try:
+        buf = doc.tobytes(garbage=4 if clean else 3, deflate=True)
+    finally:
+        doc.close()
     upload_file(file_id, buf)
+
+
+def _page(doc: fitz.Document, page_number: int) -> fitz.Page:
+    if page_number < 0 or page_number >= len(doc):
+        raise ValueError(f"Page {page_number + 1} invalide (document de {len(doc)} pages)")
+    return doc[page_number]
+
+
+def _valid_color(color) -> tuple[float, float, float]:
+    if len(color) != 3 or any(not 0 <= float(value) <= 1 for value in color):
+        raise ValueError("La couleur doit contenir trois valeurs entre 0 et 1")
+    return tuple(float(value) for value in color)
 
 
 # ─── Ajout de texte ───────────────────────────────────────────────────────────
 
 def add_text(file_id, page_number, x, y, text, font_size=12, color=(0, 0, 0)):
     doc = _open(file_id)
-    doc[page_number].insert_text((x, y), text, fontsize=font_size, color=color)
-    _save(doc, file_id)
+    try:
+        page = _page(doc, page_number)
+        if not page.rect.contains(fitz.Point(x, y)):
+            raise ValueError("La position du texte est hors de la page")
+        page.insert_text((x, y), text, fontsize=font_size, color=_valid_color(color))
+        _save(doc, file_id)
+    except Exception:
+        if not doc.is_closed:
+            doc.close()
+        raise
 
 
 # ─── Remplacement de texte ────────────────────────────────────────────────────
 
 def replace_text(file_id, page_number, x_pdf, y_pdf_baseline, width_pdf, new_text, font_size=12, color=(0, 0, 0)):
     doc = _open(file_id)
-    page = doc[page_number]
-    baseline_y = page.rect.height - y_pdf_baseline
-    rect = fitz.Rect(x_pdf - 1, baseline_y - font_size * 0.95, x_pdf + width_pdf + 4, baseline_y + font_size * 0.3)
-    page.draw_rect(rect, color=(1, 1, 1), fill=(1, 1, 1))
-    page.insert_text(fitz.Point(x_pdf, baseline_y), new_text, fontsize=font_size, color=color)
-    _save(doc, file_id, clean=True)
+    try:
+        page = _page(doc, page_number)
+        baseline_y = page.rect.height - y_pdf_baseline
+        rect = fitz.Rect(
+            max(0, x_pdf - 1), max(0, baseline_y - font_size * 1.05),
+            min(page.rect.width, x_pdf + width_pdf + 3),
+            min(page.rect.height, baseline_y + font_size * 0.35),
+        )
+        if rect.is_empty or not page.rect.intersects(rect):
+            raise ValueError("La zone de texte est hors de la page")
+
+        # Une vraie rédaction supprime l'ancien contenu, contrairement à un
+        # rectangle blanc qui le laissait sélectionnable et recherchable.
+        page.add_redact_annot(rect, fill=(1, 1, 1))
+        page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_NONE)
+        if new_text:
+            target = fitz.Rect(rect.x0, rect.y0, max(rect.x1, rect.x0 + width_pdf + 20), rect.y1 + font_size * 0.35)
+            result = page.insert_textbox(target, new_text, fontsize=font_size, color=_valid_color(color), align=fitz.TEXT_ALIGN_LEFT)
+            if result < 0:
+                # Les textes plus longs peuvent dépasser la zone d'origine :
+                # on conserve la ligne avec une taille minimale lisible.
+                page.insert_text(fitz.Point(x_pdf, baseline_y), new_text, fontsize=max(4, font_size * 0.9), color=_valid_color(color))
+        _save(doc, file_id, clean=True)
+    except Exception:
+        if not doc.is_closed:
+            doc.close()
+        raise
 
 
 # ─── Surlignage ───────────────────────────────────────────────────────────────
 
 def add_highlight(file_id, page_number, quads, color=(1, 1, 0)):
     doc = _open(file_id)
-    page = doc[page_number]
-    for rect_coords in quads:
-        annot = page.add_highlight_annot(fitz.Rect(*rect_coords))
-        annot.set_colors(stroke=color)
-        annot.update()
-    _save(doc, file_id)
+    try:
+        page = _page(doc, page_number)
+        for rect_coords in quads:
+            rect = fitz.Rect(*rect_coords).normalize()
+            rect = rect & page.rect
+            if rect.is_empty or rect.width < 1 or rect.height < 1:
+                raise ValueError("Zone de surlignage invalide")
+            annot = page.add_highlight_annot(rect)
+            annot.set_colors(stroke=_valid_color(color))
+            annot.set_opacity(0.35)
+            annot.update()
+        _save(doc, file_id)
+    except Exception:
+        if not doc.is_closed:
+            doc.close()
+        raise
 
 
 # ─── Image ────────────────────────────────────────────────────────────────────
 
 def add_image(file_id, page_number, x0, y0, x1, y1, image_bytes):
     doc = _open(file_id)
-    doc[page_number].insert_image(fitz.Rect(x0, y0, x1, y1), stream=image_bytes)
-    _save(doc, file_id)
+    try:
+        page = _page(doc, page_number)
+        rect = fitz.Rect(x0, y0, x1, y1).normalize()
+        if rect.is_empty or not page.rect.contains(rect):
+            raise ValueError("L'image doit être entièrement placée dans la page")
+        # PyMuPDF valide également le véritable format de l'image.
+        page.insert_image(rect, stream=image_bytes, keep_proportion=True)
+        _save(doc, file_id)
+    except Exception:
+        if not doc.is_closed:
+            doc.close()
+        raise
 
 
 # ─── Signature ────────────────────────────────────────────────────────────────
@@ -212,39 +277,35 @@ def set_metadata(file_id: str, metadata: dict) -> None:
 # ─── Rotation de pages ────────────────────────────────────────────────────────
 
 def rotate_page(file_id: str, page_number: int, degrees: int) -> None:
-    """
-    Rotate a single page by the specified degrees.
-    
-    Args:
-        file_id: The PDF file ID
-        page_number: 0-based page index
-        degrees: Rotation angle (90, 180, or 270)
-    """
+    rotate_pages(file_id, [page_number], degrees)
+
+
+def rotate_pages(file_id: str, page_numbers: list[int], degrees: int) -> None:
+    """Pivote plusieurs pages relativement à leur orientation actuelle."""
     doc = _open(file_id)
-    
-    if page_number < 0 or page_number >= len(doc):
-        doc.close()
-        raise ValueError(f"Page {page_number + 1} invalide (document a {len(doc)} pages)")
-    
-    page = doc[page_number]
-    page.set_rotation(degrees)
-    _save(doc, file_id, clean=True)
+    try:
+        if not page_numbers:
+            raise ValueError("Aucune page sélectionnée")
+        for page_number in set(page_numbers):
+            page = _page(doc, page_number)
+            page.set_rotation((page.rotation + degrees) % 360)
+        _save(doc, file_id, clean=True)
+    except Exception:
+        if not doc.is_closed:
+            doc.close()
+        raise
 
 
 def rotate_all_pages(file_id: str, degrees: int) -> None:
-    """
-    Rotate all pages in the PDF by the same angle.
-    
-    Args:
-        file_id: The PDF file ID
-        degrees: Rotation angle (90, 180, or 270)
-    """
     doc = _open(file_id)
-    
-    for page in doc:
-        page.set_rotation(degrees)
-    
-    _save(doc, file_id, clean=True)
+    try:
+        for page in doc:
+            page.set_rotation((page.rotation + degrees) % 360)
+        _save(doc, file_id, clean=True)
+    except Exception:
+        if not doc.is_closed:
+            doc.close()
+        raise
 
 
 # ─── Suppression de pages ─────────────────────────────────────────────────────

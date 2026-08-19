@@ -46,6 +46,8 @@ services:
       - ./frontend/index.html:/app/index.html
     depends_on:
       - backend
+    environment:
+      - VITE_PROXY_TARGET=http://backend:8000
     restart: unless-stopped
 
 volumes:

@@ -75,23 +75,45 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
     return user
 
 
-def require_credit(user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> User:
-    """Dependency: vérifie qu'il reste au moins 1 crédit, le décrémente et enregistre la transaction."""
-    if user.is_admin:
-        return user
-    if user.credits <= 0:
+def require_available_credit(user: User = Depends(get_current_user)) -> User:
+    """Vérifie le solde sans facturer une opération qui pourrait échouer."""
+    if not user.is_admin and user.credits <= 0:
         raise HTTPException(status_code=402, detail="Crédits insuffisants. Rechargez votre compte.")
-    user.credits -= 1
-    tx = Transaction(
-        id=str(uuid.uuid4()),
-        user_id=user.id,
-        type="operation",
-        credits_delta=-1,
+    return user
+
+
+def consume_credit(db: Session, user: User, file_id: str | None = None) -> None:
+    """Facture une opération terminée avec succès.
+
+    La mise à jour conditionnelle protège également le solde contre deux requêtes
+    concurrentes. Les administrateurs ne sont jamais débités.
+    """
+    if user.is_admin:
+        return
+    updated = (
+        db.query(User)
+        .filter(User.id == user.id, User.credits > 0)
+        .update({User.credits: User.credits - 1}, synchronize_session=False)
     )
-    db.add(tx)
+    if updated != 1:
+        db.rollback()
+        raise HTTPException(status_code=402, detail="Crédits insuffisants. Rechargez votre compte.")
+    db.add(Transaction(
+        id=str(uuid.uuid4()), user_id=user.id, file_id=file_id,
+        type="operation", credits_delta=-1,
+    ))
     db.commit()
     db.refresh(user)
     if user.credits <= 2:
         from services.email import send_low_credits_email
         send_low_credits_email(user.email, user.credits)
+
+
+def require_credit(user: User = Depends(require_available_credit), db: Session = Depends(get_db)) -> User:
+    """Compatibilité pour les anciennes routes : débit immédiat.
+
+    Les routes d'édition utilisent `require_available_credit` puis
+    `consume_credit` uniquement après succès.
+    """
+    consume_credit(db, user)
     return user

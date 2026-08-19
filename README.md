@@ -88,6 +88,7 @@ Le déploiement se fait automatiquement à chaque push sur `main`.
 | `POST` | `/api/files/{id}/sign` | Signer (1 crédit) |
 | `POST` | `/api/files/{id}/rotate-page` | Rotation page (1 crédit) |
 | `POST` | `/api/files/{id}/rotate-all` | Rotation toutes pages (1 crédit) |
+| `POST` | `/api/files/{id}/rotate-pages` | Rotation d'une sélection de pages (1 crédit) |
 | `POST` | `/api/files/{id}/delete-pages` | Supprimer pages (1 crédit) |
 | `POST` | `/api/files/{id}/reorder-pages` | Réorganiser pages (1 crédit) |
 | `POST` | `/api/files/{id}/compress` | Compresser (1 crédit) |
@@ -127,12 +128,12 @@ npx playwright test
 - ✅ Timing-attack safe comparison
 - ✅ JWT avec expiration 7 jours
 
-## Raccourcis clavier
+## Édition de texte
 
-| Raccourci | Action |
-|-----------|--------|
-| `Ctrl/Cmd + Z` | Annuler |
-| `Ctrl/Cmd + Shift + Z` | Rétablir |
-| `Ctrl/Cmd + Y` | Rétablir (alternatif) |
+| Interaction | Action |
+|-------------|--------|
+| Clic sur une zone de texte | Ouvrir l'édition inline |
 | `Entrée` | Sauvegarder le texte |
 | `Échap` | Annuler l'édition |
+
+Les modifications sont inscrites directement dans le PDF. L'ancien contenu texte est réellement supprimé (rédaction PDF), et non simplement masqué visuellement.

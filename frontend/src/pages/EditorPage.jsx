@@ -1,8 +1,8 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import { useDropzone } from 'react-dropzone'
 import { listFiles, uploadFile, compressPdf, exportImages, applyOcr, fetchPdfBlob } from '../services/api'
 import { toast } from 'sonner'
-import { PanelLeftClose, PanelLeftOpen, UploadCloud, Undo2, Redo2 } from 'lucide-react'
+import { PanelLeftClose, PanelLeftOpen, UploadCloud } from 'lucide-react'
 
 import FileList from '../components/FileList'
 import Toolbar from '../components/Toolbar'
@@ -17,7 +17,6 @@ import { AppLogo, Button } from '../components/ui/index.js'
 import UserMenu from '../components/UserMenu'
 import PaywallModal from '../components/PaywallModal'
 import OnboardingTooltip from '../components/OnboardingTooltip'
-import { useUndoRedo } from '../hooks/useUndoRedo'
 
 export default function EditorPage() {
   const [files, setFiles] = useState([])
@@ -32,18 +31,18 @@ export default function EditorPage() {
   const [textViewport, setTextViewport] = useState(null)
   const [paywallMsg, setPaywallMsg] = useState(null)
   const [sidebarOpen, setSidebarOpen] = useState(true)
-  const [toolbarCollapsed, setToolbarCollapsed] = useState(false)
+  const [toolbarCollapsed] = useState(false)
   const [pdfScale, setPdfScale] = useState(1.5)
-
-  // Undo/Redo state for PDF operations
-  const { state: historyState, push: pushHistory, undo, redo, canUndo, canRedo } = useUndoRedo({
-    fileId: null,
-    page: 1,
-  })
+  const pdfUrlRef = React.useRef(null)
 
   const handleTextItems = useCallback((items, vp) => {
     setTextItems(items)
     setTextViewport(vp)
+  }, [])
+
+  const handleTotalPages = useCallback((count) => {
+    setTotalPages(count)
+    setCurrentPage(page => Math.min(page, count))
   }, [])
 
   const refresh = useCallback(async () => {
@@ -63,19 +62,17 @@ export default function EditorPage() {
     return () => window.removeEventListener('paywall', handler)
   }, [])
 
-  // Load PDF as blob URL
+  // Load PDF as blob URL, without retaining previous documents in memory.
   const loadPdf = useCallback(async (f) => {
-    // Revoke previous blob URL to prevent memory leaks
-    if (pdfUrl?.startsWith('blob:')) {
-      URL.revokeObjectURL(pdfUrl)
-    }
-    
     const blobUrl = await fetchPdfBlob(f.id)
+    if (pdfUrlRef.current) URL.revokeObjectURL(pdfUrlRef.current)
+    pdfUrlRef.current = blobUrl
     setPdfUrl(blobUrl)
-    
-    // Push to history
-    pushHistory({ fileId: f.id, page: 1 })
-  }, [pdfUrl, pushHistory])
+  }, [])
+
+  useEffect(() => () => {
+    if (pdfUrlRef.current) URL.revokeObjectURL(pdfUrlRef.current)
+  }, [])
 
   const handleSelectFile = (f) => {
     setActiveFile(f)
@@ -96,12 +93,11 @@ export default function EditorPage() {
       setFiles(updated)
       const f = updated.find(x => x.id === activeFile.id)
       if (f) {
-        loadPdf(f)
-        // Push to undo history
-        pushHistory({ fileId: f.id, page: currentPage })
+        setActiveFile(f)
+        await loadPdf(f)
       }
     }
-  }, [activeFile, loadPdf, pushHistory, currentPage])
+  }, [activeFile, loadPdf])
 
   const onDrop = useCallback(async (acceptedFiles) => {
     for (const file of acceptedFiles) {
@@ -165,38 +161,8 @@ export default function EditorPage() {
       return
     }
 
-    // Undo/Redo buttons
-    if (tool === 'undo') {
-      undo()
-      return
-    }
-
-    if (tool === 'redo') {
-      redo()
-      return
-    }
-
     setActiveTool(tool)
   }
-
-  // Keyboard shortcuts
-  useEffect(() => {
-    const handleKeyDown = (e) => {
-      // Undo: Cmd/Ctrl + Z
-      if ((e.metaKey || e.ctrlKey) && e.key === 'z' && !e.shiftKey) {
-        e.preventDefault()
-        undo()
-      }
-      // Redo: Cmd/Ctrl + Shift + Z or Cmd/Ctrl + Y
-      if ((e.metaKey || e.ctrlKey) && (e.key === 'z' && e.shiftKey) || e.key === 'y') {
-        e.preventDefault()
-        redo()
-      }
-    }
-
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [undo, redo])
 
   // Panel visibility
   const showSignPanel = activeTool === 'sign' && activeFile
@@ -232,30 +198,6 @@ export default function EditorPage() {
 
         <AppLogo />
 
-        {/* Undo/Redo buttons */}
-        {activeFile && (
-          <div className="flex items-center gap-0.5 ml-2">
-            <button
-              onClick={() => undo()}
-              disabled={!canUndo}
-              className="p-1.5 rounded-lg text-ink-muted hover:text-ink hover:bg-surface-raised disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-              title="Annuler (Cmd+Z)"
-              aria-label="Annuler"
-            >
-              <Undo2 size={14} />
-            </button>
-            <button
-              onClick={() => redo()}
-              disabled={!canRedo}
-              className="p-1.5 rounded-lg text-ink-muted hover:text-ink hover:bg-surface-raised disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-              title="Rétablir (Cmd+Shift+Z)"
-              aria-label="Rétablir"
-            >
-              <Redo2 size={14} />
-            </button>
-          </div>
-        )}
-
         {/* File path */}
         {activeFile && (
           <>
@@ -287,8 +229,6 @@ export default function EditorPage() {
           onNextPage={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
           hasFile={!!activeFile}
           collapsed={toolbarCollapsed}
-          canUndo={canUndo}
-          canRedo={canRedo}
         />
 
         {/* Sidebar */}
@@ -332,7 +272,7 @@ export default function EditorPage() {
                 <PDFViewer
                   fileUrl={pdfUrl}
                   currentPage={currentPage}
-                  onTotalPages={setTotalPages}
+                  onTotalPages={handleTotalPages}
                   onPageRendered={setCanvasSize}
                   onTextItems={handleTextItems}
                   scale={pdfScale}
@@ -366,7 +306,13 @@ export default function EditorPage() {
 
           {/* Contextual panels */}
           {showSignPanel && (
-            <SignaturePanel fileId={activeFile.id} currentPage={currentPage} onSaved={handleSaved} />
+            <SignaturePanel
+              fileId={activeFile.id}
+              currentPage={currentPage}
+              canvasSize={canvasSize}
+              onSaved={handleSaved}
+              onClose={() => setActiveTool('select')}
+            />
           )}
           {showMetaPanel && (
             <MetadataPanel fileId={activeFile.id} onSaved={handleSaved} onClose={() => setActiveTool('select')} />

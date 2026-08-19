@@ -99,6 +99,9 @@ export const rotatePage = (id, page, degrees) =>
 export const rotateAllPages = (id, degrees) => 
   api.post(`/files/${id}/rotate-all`, { degrees }).then(r => r.data)
 
+export const rotatePages = (id, pages, degrees) =>
+  api.post(`/files/${id}/rotate-pages`, { pages, degrees }).then(r => r.data)
+
 export const deletePages = (id, pages) => 
   api.post(`/files/${id}/delete-pages`, { pages }).then(r => r.data)
 
