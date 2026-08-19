@@ -1,4 +1,5 @@
 import os
+import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -11,7 +12,29 @@ from sqlalchemy.orm import Session
 
 from database import User, Transaction, get_db
 
-SECRET_KEY = os.getenv("SECRET_KEY", "change-me-in-production-please")
+
+def _get_secret_key() -> str:
+    """Get and validate SECRET_KEY from environment."""
+    key = os.getenv("SECRET_KEY")
+    if not key:
+        # Generate ephemeral key for development only
+        if os.getenv("ENVIRONMENT") != "production":
+            return secrets.token_hex(32)
+        # In production, refuse to start without a proper key
+        raise RuntimeError(
+            "FATAL: SECRET_KEY environment variable is required in production. "
+            "Generate with: python -c \"import secrets; print(secrets.token_hex(32))\""
+        )
+    # Validate minimum strength
+    if len(key) < 32:
+        if os.getenv("ENVIRONMENT") == "production":
+            raise ValueError("SECRET_KEY must be at least 32 characters in production")
+        import warnings
+        warnings.warn("SECRET_KEY is shorter than 32 characters. This is insecure for production.")
+    return key
+
+
+SECRET_KEY = _get_secret_key()
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 7 days
 

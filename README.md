@@ -1,10 +1,8 @@
 # PDFPro — Éditeur PDF SaaS
 
-Éditeur PDF professionnel en ligne, modèle pay-as-you-go (0,25€ par opération via crédits prépayés).
-
 ![Stack](https://img.shields.io/badge/React-18-61DAFB?logo=react) ![Stack](https://img.shields.io/badge/FastAPI-0.110-009688?logo=fastapi) ![Stack](https://img.shields.io/badge/Tailwind-3-06B6D4?logo=tailwindcss) ![Stack](https://img.shields.io/badge/Railway-Deploy-0B0D0E?logo=railway)
 
----
+Éditeur PDF professionnel en ligne, modèle pay-as-you-go (0,25€ par opération via crédits prépayés).
 
 ## Fonctionnalités
 
@@ -14,21 +12,18 @@
 | **Surlignage** | Annotation jaune sur sélection |
 | **Image** | Insertion d'image à la position souhaitée |
 | **Signature** | Signature électronique dessinée |
+| **Pages** | Rotation, suppression, réorganisation |
 | **Combiner** | Fusion de plusieurs PDFs |
 | **Séparer** | Division par plages de pages |
 | **Compresser** | Réduction du poids du PDF |
 | **Exporter** | Export de chaque page en PNG (ZIP) |
 | **OCR** | Extraction de texte depuis PDFs scannés |
 
----
-
 ## Modèle économique
 
 - **1 crédit = 1 opération = 0,25€**
 - Achat de crédits en lot : 5€ (20 cr.) / 10€ (44 cr.) / 20€ (100 cr.)
 - Paiement via Stripe Checkout (one-time payment)
-
----
 
 ## Stack technique
 
@@ -37,8 +32,6 @@
 **Backend** — FastAPI + PyMuPDF + PostgreSQL + SQLAlchemy + Alembic
 
 **Infra** — Railway (backend + frontend + PostgreSQL) + Cloudflare R2 (stockage)
-
----
 
 ## Lancement local (Docker)
 
@@ -49,8 +42,6 @@ docker compose up --build
 ```
 
 Application disponible sur **http://localhost:5173**
-
----
 
 ## Variables d'environnement
 
@@ -71,8 +62,6 @@ Application disponible sur **http://localhost:5173**
 | `ALLOWED_ORIGINS` | CORS origins séparées par virgule |
 | `SENTRY_DSN` | DSN Sentry pour le monitoring (optionnel) |
 
----
-
 ## Déploiement Railway
 
 1. Créer un projet Railway avec 3 services : `backend`, `frontend`, `postgres`
@@ -81,8 +70,6 @@ Application disponible sur **http://localhost:5173**
 4. Ajouter `RAILWAY_TOKEN` dans les secrets GitHub pour le CI/CD automatique
 
 Le déploiement se fait automatiquement à chaque push sur `main`.
-
----
 
 ## API
 
@@ -99,6 +86,10 @@ Le déploiement se fait automatiquement à chaque push sur `main`.
 | `POST` | `/api/files/{id}/add-image` | Insérer image (1 crédit) |
 | `POST` | `/api/files/{id}/highlight` | Surligner (1 crédit) |
 | `POST` | `/api/files/{id}/sign` | Signer (1 crédit) |
+| `POST` | `/api/files/{id}/rotate-page` | Rotation page (1 crédit) |
+| `POST` | `/api/files/{id}/rotate-all` | Rotation toutes pages (1 crédit) |
+| `POST` | `/api/files/{id}/delete-pages` | Supprimer pages (1 crédit) |
+| `POST` | `/api/files/{id}/reorder-pages` | Réorganiser pages (1 crédit) |
 | `POST` | `/api/files/{id}/compress` | Compresser (1 crédit) |
 | `POST` | `/api/files/{id}/export-images` | Exporter en PNG (1 crédit) |
 | `POST` | `/api/files/{id}/ocr` | OCR (1 crédit) |
@@ -110,3 +101,38 @@ Le déploiement se fait automatiquement à chaque push sur `main`.
 | `POST` | `/api/billing/webhook` | Webhook Stripe |
 
 Documentation interactive : **http://localhost:8000/docs**
+
+## Tests
+
+```bash
+# Backend tests
+cd backend
+pip install pytest
+pytest tests/
+
+# Frontend (Playwright)
+cd frontend
+npm install
+npx playwright install
+npx playwright test
+```
+
+## Sécurité
+
+- ✅ Validation taille fichier (max 50MB)
+- ✅ Validation magic bytes PDF
+- ✅ Sanitization filename
+- ✅ Rate limiting sur auth
+- ✅ Security headers (CSP, X-Frame-Options, etc.)
+- ✅ Timing-attack safe comparison
+- ✅ JWT avec expiration 7 jours
+
+## Raccourcis clavier
+
+| Raccourci | Action |
+|-----------|--------|
+| `Ctrl/Cmd + Z` | Annuler |
+| `Ctrl/Cmd + Shift + Z` | Rétablir |
+| `Ctrl/Cmd + Y` | Rétablir (alternatif) |
+| `Entrée` | Sauvegarder le texte |
+| `Échap` | Annuler l'édition |
