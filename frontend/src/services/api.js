@@ -29,8 +29,8 @@ api.interceptors.response.use(
 export default api
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
-export const register = (email, password) =>
-  api.post('/auth/register', { email, password }).then(r => r.data)
+export const register = (email, password, acceptedTerms = false) =>
+  api.post('/auth/register', { email, password, accepted_terms: acceptedTerms }).then(r => r.data)
 
 export const login = (email, password) => {
   const form = new FormData()
@@ -78,6 +78,7 @@ export const updateMetadata = (id, payload) => api.post(`/files/${id}/metadata`,
 export const forgotPassword = (email) => api.post('/auth/forgot-password', { email }).then(r => r.data)
 export const resetPassword = (token, new_password) => api.post('/auth/reset-password', { token, new_password }).then(r => r.data)
 export const deleteAccount = () => api.delete('/auth/me').then(r => r.data)
+export const exportAccount = () => api.get('/auth/export').then(r => r.data)
 
 // ── Billing ───────────────────────────────────────────────────────────────────
 export const createTopup = (pack) => api.post('/billing/topup', { pack }).then(r => r.data)
@@ -86,6 +87,7 @@ export const getBillingHistory = () => api.get('/billing/history').then(r => r.d
 
 // ── Partage ───────────────────────────────────────────────────────────────────
 export const shareFile = (id) => api.post(`/files/${id}/share`).then(r => r.data)
+export const revokeShare = (id) => api.delete(`/files/${id}/share`).then(r => r.data)
 
 // ── Nouvelles features ────────────────────────────────────────────────────────
 export const compressPdf = (id) => api.post(`/files/${id}/compress`).then(r => r.data)
@@ -98,6 +100,9 @@ export const rotatePage = (id, page, degrees) =>
 
 export const rotateAllPages = (id, degrees) => 
   api.post(`/files/${id}/rotate-all`, { degrees }).then(r => r.data)
+
+export const rotatePages = (id, pages, degrees) =>
+  api.post(`/files/${id}/rotate-pages`, { pages, degrees }).then(r => r.data)
 
 export const deletePages = (id, pages) => 
   api.post(`/files/${id}/delete-pages`, { pages }).then(r => r.data)

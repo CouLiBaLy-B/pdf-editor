@@ -1,3 +1,4 @@
+import logging
 import os
 import secrets
 import uuid
@@ -38,6 +39,7 @@ SECRET_KEY = _get_secret_key()
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 7 days
 
+logger = logging.getLogger("pdfpro")
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 
@@ -50,9 +52,14 @@ def verify_password(plain: str, hashed: str) -> bool:
     return pwd_context.verify(plain, hashed)
 
 
-def create_access_token(user_id: str) -> str:
-    expire = datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    return jwt.encode({"sub": user_id, "exp": expire}, SECRET_KEY, algorithm=ALGORITHM)
+def create_access_token(user_id: str, token_version: int = 0) -> str:
+    now = datetime.now(timezone.utc)
+    expire = now + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    return jwt.encode(
+        {"sub": user_id, "ver": token_version, "iat": now, "exp": expire},
+        SECRET_KEY,
+        algorithm=ALGORITHM,
+    )
 
 
 def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)) -> User:
@@ -70,28 +77,53 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
         raise credentials_exc
 
     user = db.query(User).filter(User.id == user_id).first()
-    if not user:
+    if not user or payload.get("ver", -1) != user.token_version:
         raise credentials_exc
     return user
 
 
-def require_credit(user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> User:
-    """Dependency: vérifie qu'il reste au moins 1 crédit, le décrémente et enregistre la transaction."""
-    if user.is_admin:
-        return user
-    if user.credits <= 0:
+def require_available_credit(user: User = Depends(get_current_user)) -> User:
+    """Vérifie le solde sans facturer une opération qui pourrait échouer."""
+    if not user.is_admin and user.credits <= 0:
         raise HTTPException(status_code=402, detail="Crédits insuffisants. Rechargez votre compte.")
-    user.credits -= 1
-    tx = Transaction(
-        id=str(uuid.uuid4()),
-        user_id=user.id,
-        type="operation",
-        credits_delta=-1,
+    return user
+
+
+def consume_credit(db: Session, user: User, file_id: str | None = None) -> None:
+    """Facture une opération terminée avec succès.
+
+    La mise à jour conditionnelle protège également le solde contre deux requêtes
+    concurrentes. Les administrateurs ne sont jamais débités.
+    """
+    if user.is_admin:
+        return
+    updated = (
+        db.query(User)
+        .filter(User.id == user.id, User.credits > 0)
+        .update({User.credits: User.credits - 1}, synchronize_session=False)
     )
-    db.add(tx)
+    if updated != 1:
+        db.rollback()
+        raise HTTPException(status_code=402, detail="Crédits insuffisants. Rechargez votre compte.")
+    db.add(Transaction(
+        id=str(uuid.uuid4()), user_id=user.id, file_id=file_id,
+        type="operation", credits_delta=-1,
+    ))
     db.commit()
     db.refresh(user)
-    if user.credits <= 2:
-        from services.email import send_low_credits_email
-        send_low_credits_email(user.email, user.credits)
+    if user.credits == 2:
+        try:
+            from services.email import send_low_credits_email
+            send_low_credits_email(user.email, user.credits)
+        except Exception:
+            logger.exception("Low-credit email failed for user %s", user.id)
+
+
+def require_credit(user: User = Depends(require_available_credit), db: Session = Depends(get_db)) -> User:
+    """Compatibilité pour les anciennes routes : débit immédiat.
+
+    Les routes d'édition utilisent `require_available_credit` puis
+    `consume_credit` uniquement après succès.
+    """
+    consume_credit(db, user)
     return user

@@ -1,8 +1,8 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import { useDropzone } from 'react-dropzone'
-import { listFiles, uploadFile, compressPdf, exportImages, applyOcr, fetchPdfBlob } from '../services/api'
+import { listFiles, uploadFile, compressPdf, exportImages, applyOcr, fetchPdfBlob, getMe } from '../services/api'
 import { toast } from 'sonner'
-import { PanelLeftClose, PanelLeftOpen, UploadCloud, Undo2, Redo2 } from 'lucide-react'
+import { PanelLeftClose, PanelLeftOpen, UploadCloud } from 'lucide-react'
 
 import FileList from '../components/FileList'
 import Toolbar from '../components/Toolbar'
@@ -17,9 +17,10 @@ import { AppLogo, Button } from '../components/ui/index.js'
 import UserMenu from '../components/UserMenu'
 import PaywallModal from '../components/PaywallModal'
 import OnboardingTooltip from '../components/OnboardingTooltip'
-import { useUndoRedo } from '../hooks/useUndoRedo'
+import { useAuth } from '../context/AuthContext'
 
 export default function EditorPage() {
+  const { setUser } = useAuth()
   const [files, setFiles] = useState([])
   const [filesLoading, setFilesLoading] = useState(true)
   const [activeFile, setActiveFile] = useState(null)
@@ -32,28 +33,36 @@ export default function EditorPage() {
   const [textViewport, setTextViewport] = useState(null)
   const [paywallMsg, setPaywallMsg] = useState(null)
   const [sidebarOpen, setSidebarOpen] = useState(true)
-  const [toolbarCollapsed, setToolbarCollapsed] = useState(false)
+  const [toolbarCollapsed] = useState(false)
   const [pdfScale, setPdfScale] = useState(1.5)
-
-  // Undo/Redo state for PDF operations
-  const { state: historyState, push: pushHistory, undo, redo, canUndo, canRedo } = useUndoRedo({
-    fileId: null,
-    page: 1,
-  })
+  const pdfUrlRef = React.useRef(null)
 
   const handleTextItems = useCallback((items, vp) => {
     setTextItems(items)
     setTextViewport(vp)
   }, [])
 
-  const refresh = useCallback(async () => {
-    const data = await listFiles()
-    setFiles(data)
-    setFilesLoading(false)
+  const handleTotalPages = useCallback((count) => {
+    setTotalPages(count)
+    setCurrentPage(page => Math.min(page, count))
   }, [])
 
+  const refresh = useCallback(async () => {
+    try {
+      const [data, profile] = await Promise.all([listFiles(), getMe()])
+      setFiles(data)
+      setUser(profile)
+      return data
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'Impossible de charger vos documents')
+      throw error
+    } finally {
+      setFilesLoading(false)
+    }
+  }, [setUser])
+
   useEffect(() => {
-    refresh()
+    refresh().catch(() => {})
   }, [refresh])
 
   // Listen for paywall events
@@ -63,19 +72,30 @@ export default function EditorPage() {
     return () => window.removeEventListener('paywall', handler)
   }, [])
 
-  // Load PDF as blob URL
+  // Load PDF as blob URL, without retaining previous documents in memory.
   const loadPdf = useCallback(async (f) => {
-    // Revoke previous blob URL to prevent memory leaks
-    if (pdfUrl?.startsWith('blob:')) {
-      URL.revokeObjectURL(pdfUrl)
-    }
-    
     const blobUrl = await fetchPdfBlob(f.id)
+    if (pdfUrlRef.current) URL.revokeObjectURL(pdfUrlRef.current)
+    pdfUrlRef.current = blobUrl
     setPdfUrl(blobUrl)
-    
-    // Push to history
-    pushHistory({ fileId: f.id, page: 1 })
-  }, [pdfUrl, pushHistory])
+  }, [])
+
+  useEffect(() => () => {
+    if (pdfUrlRef.current) URL.revokeObjectURL(pdfUrlRef.current)
+  }, [])
+
+  const handleDeletedFile = (file) => {
+    if (file.id !== activeFile?.id) return
+    if (pdfUrlRef.current) URL.revokeObjectURL(pdfUrlRef.current)
+    pdfUrlRef.current = null
+    setPdfUrl(null)
+    setActiveFile(null)
+    setTotalPages(0)
+    setCanvasSize(null)
+    setTextItems([])
+    setTextViewport(null)
+    setActiveTool('select')
+  }
 
   const handleSelectFile = (f) => {
     setActiveFile(f)
@@ -92,25 +112,29 @@ export default function EditorPage() {
     if (activeFile) {
       setTextItems([])
       setTextViewport(null)
-      const updated = await listFiles()
-      setFiles(updated)
+      const updated = await refresh()
       const f = updated.find(x => x.id === activeFile.id)
       if (f) {
-        loadPdf(f)
-        // Push to undo history
-        pushHistory({ fileId: f.id, page: currentPage })
+        setActiveFile(f)
+        await loadPdf(f)
       }
     }
-  }, [activeFile, loadPdf, pushHistory, currentPage])
+  }, [activeFile, loadPdf, refresh])
 
-  const onDrop = useCallback(async (acceptedFiles) => {
+  const onDrop = useCallback(async (acceptedFiles, rejectedFiles = []) => {
+    if (rejectedFiles.length) toast.error('Seuls les fichiers PDF sont acceptés')
+    let imported = 0
     for (const file of acceptedFiles) {
       try {
         await uploadFile(file)
-        await refresh()
-      } catch (err) {
-        if (err.response?.status === 402) setPaywallMsg(err.response?.data?.detail)
+        imported += 1
+      } catch (error) {
+        toast.error(`${file.name} : ${error.response?.data?.detail || 'import impossible'}`)
       }
+    }
+    if (imported) {
+      await refresh()
+      toast.success(`${imported} document${imported > 1 ? 's' : ''} importé${imported > 1 ? 's' : ''}`)
     }
   }, [refresh])
 
@@ -165,38 +189,8 @@ export default function EditorPage() {
       return
     }
 
-    // Undo/Redo buttons
-    if (tool === 'undo') {
-      undo()
-      return
-    }
-
-    if (tool === 'redo') {
-      redo()
-      return
-    }
-
     setActiveTool(tool)
   }
-
-  // Keyboard shortcuts
-  useEffect(() => {
-    const handleKeyDown = (e) => {
-      // Undo: Cmd/Ctrl + Z
-      if ((e.metaKey || e.ctrlKey) && e.key === 'z' && !e.shiftKey) {
-        e.preventDefault()
-        undo()
-      }
-      // Redo: Cmd/Ctrl + Shift + Z or Cmd/Ctrl + Y
-      if ((e.metaKey || e.ctrlKey) && (e.key === 'z' && e.shiftKey) || e.key === 'y') {
-        e.preventDefault()
-        redo()
-      }
-    }
-
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [undo, redo])
 
   // Panel visibility
   const showSignPanel = activeTool === 'sign' && activeFile
@@ -232,30 +226,6 @@ export default function EditorPage() {
 
         <AppLogo />
 
-        {/* Undo/Redo buttons */}
-        {activeFile && (
-          <div className="flex items-center gap-0.5 ml-2">
-            <button
-              onClick={() => undo()}
-              disabled={!canUndo}
-              className="p-1.5 rounded-lg text-ink-muted hover:text-ink hover:bg-surface-raised disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-              title="Annuler (Cmd+Z)"
-              aria-label="Annuler"
-            >
-              <Undo2 size={14} />
-            </button>
-            <button
-              onClick={() => redo()}
-              disabled={!canRedo}
-              className="p-1.5 rounded-lg text-ink-muted hover:text-ink hover:bg-surface-raised disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-              title="Rétablir (Cmd+Shift+Z)"
-              aria-label="Rétablir"
-            >
-              <Redo2 size={14} />
-            </button>
-          </div>
-        )}
-
         {/* File path */}
         {activeFile && (
           <>
@@ -287,8 +257,6 @@ export default function EditorPage() {
           onNextPage={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
           hasFile={!!activeFile}
           collapsed={toolbarCollapsed}
-          canUndo={canUndo}
-          canRedo={canRedo}
         />
 
         {/* Sidebar */}
@@ -301,6 +269,7 @@ export default function EditorPage() {
             activeId={activeFile?.id}
             onSelect={handleSelectFile}
             onRefresh={refresh}
+            onDeleted={handleDeletedFile}
             onUpload={open}
             loading={filesLoading}
           />
@@ -332,7 +301,7 @@ export default function EditorPage() {
                 <PDFViewer
                   fileUrl={pdfUrl}
                   currentPage={currentPage}
-                  onTotalPages={setTotalPages}
+                  onTotalPages={handleTotalPages}
                   onPageRendered={setCanvasSize}
                   onTextItems={handleTextItems}
                   scale={pdfScale}
@@ -366,16 +335,22 @@ export default function EditorPage() {
 
           {/* Contextual panels */}
           {showSignPanel && (
-            <SignaturePanel fileId={activeFile.id} currentPage={currentPage} onSaved={handleSaved} />
+            <SignaturePanel
+              fileId={activeFile.id}
+              currentPage={currentPage}
+              canvasSize={canvasSize}
+              onSaved={handleSaved}
+              onClose={() => setActiveTool('select')}
+            />
           )}
           {showMetaPanel && (
             <MetadataPanel fileId={activeFile.id} onSaved={handleSaved} onClose={() => setActiveTool('select')} />
           )}
           {showMergePanel && (
-            <MergeSplitPanel mode="merge" file={activeFile} allFiles={files} onRefresh={refresh} />
+            <MergeSplitPanel mode="merge" file={activeFile} allFiles={files} totalPages={totalPages} onRefresh={refresh} onClose={() => setActiveTool('select')} />
           )}
           {showSplitPanel && (
-            <MergeSplitPanel mode="split" file={activeFile} allFiles={files} onRefresh={refresh} />
+            <MergeSplitPanel mode="split" file={activeFile} allFiles={files} totalPages={totalPages} onRefresh={refresh} onClose={() => setActiveTool('select')} />
           )}
           {showPagesPanel && (
             <PagesPanel

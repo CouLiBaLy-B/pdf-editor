@@ -1,238 +1,159 @@
-import React, { useState, useCallback } from 'react'
-import { RotateCw, Trash2, GripVertical } from 'lucide-react'
+import React, { useEffect, useMemo, useState } from 'react'
+import { GripVertical, RotateCw, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
-import { rotatePage, rotateAllPages, deletePages, reorderPages } from '../services/api'
-import { Panel, Button } from './ui/index.js'
+import { deletePages, reorderPages, rotateAllPages, rotatePages } from '../services/api'
+import { Button, ConfirmDialog, Panel } from './ui/index.js'
 
-/**
- * Panel for page operations: rotate, delete, reorder
- */
 export default function PagesPanel({ fileId, totalPages, currentPage, onSaved, onClose }) {
-  const [selectedPages, setSelectedPages] = useState([])
+  const [selected, setSelected] = useState([])
+  const [order, setOrder] = useState([])
+  const [dragged, setDragged] = useState(null)
   const [loading, setLoading] = useState(false)
-  const [dragIndex, setDragIndex] = useState(null)
+  const [confirmDelete, setConfirmDelete] = useState(false)
 
-  const togglePage = (pageIndex) => {
-    setSelectedPages(prev =>
-      prev.includes(pageIndex)
-        ? prev.filter(p => p !== pageIndex)
-        : [...prev, pageIndex]
-    )
-  }
+  useEffect(() => {
+    setOrder(Array.from({ length: totalPages }, (_, index) => index))
+    setSelected([])
+  }, [fileId, totalPages])
 
-  const selectAll = () => {
-    if (selectedPages.length === totalPages) {
-      setSelectedPages([])
-    } else {
-      setSelectedPages(Array.from({ length: totalPages }, (_, i) => i))
-    }
-  }
+  const orderChanged = useMemo(() => order.some((page, index) => page !== index), [order])
+  const selectedSet = useMemo(() => new Set(selected), [selected])
 
-  const handleRotateSingle = async (pageIndex, degrees) => {
+  const run = async (operation, success) => {
     setLoading(true)
     try {
-      await rotatePage(fileId, pageIndex, degrees)
-      toast.success(`Page ${pageIndex + 1} pivotée de ${degrees}°`)
-      onSaved?.()
-    } catch (err) {
-      toast.error(err.response?.data?.detail || 'Erreur rotation')
+      await operation()
+      toast.success(success)
+      await onSaved?.()
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'L’opération sur les pages a échoué')
     } finally {
       setLoading(false)
     }
   }
 
-  const handleRotateAll = async (degrees) => {
-    setLoading(true)
-    try {
-      await rotateAllPages(fileId, degrees)
-      toast.success(`Toutes les pages pivotées de ${degrees}°`)
-      onSaved?.()
-    } catch (err) {
-      toast.error(err.response?.data?.detail || 'Erreur rotation')
-    } finally {
-      setLoading(false)
-    }
+  const toggle = page => setSelected(current =>
+    current.includes(page) ? current.filter(item => item !== page) : [...current, page]
+  )
+
+  const rotateSelection = degrees => {
+    if (!selected.length) return
+    run(() => rotatePages(fileId, selected, degrees), `${selected.length} page(s) pivotée(s)`)
   }
 
-  const handleDeleteSelected = async () => {
-    if (selectedPages.length === 0) {
-      toast.warning('Sélectionnez des pages à supprimer')
-      return
-    }
-    
-    if (selectedPages.length >= totalPages) {
-      toast.error('Impossible de supprimer toutes les pages')
-      return
-    }
-
-    setLoading(true)
-    try {
-      const result = await deletePages(fileId, selectedPages)
-      toast.success(`${selectedPages.length} page(s) supprimée(s)`)
-      setSelectedPages([])
-      onSaved?.()
-    } catch (err) {
-      toast.error(err.response?.data?.detail || 'Erreur suppression')
-    } finally {
-      setLoading(false)
-    }
+  const moveDraggedBefore = targetPage => {
+    if (dragged === null || dragged === targetPage) return
+    setOrder(current => {
+      const next = current.filter(page => page !== dragged)
+      next.splice(next.indexOf(targetPage), 0, dragged)
+      return next
+    })
   }
 
-  // Drag and drop handlers for reordering
-  const handleDragStart = (e, index) => {
-    setDragIndex(index)
-    e.dataTransfer.effectAllowed = 'move'
-  }
+  const applyOrder = () => run(
+    () => reorderPages(fileId, order),
+    'Nouvel ordre des pages enregistré',
+  )
 
-  const handleDragOver = (e, index) => {
-    e.preventDefault()
-    if (dragIndex === null || dragIndex === index) return
-    
-    const newOrder = [...selectedPages]
-    const draggedItem = newOrder[dragIndex]
-    newOrder.splice(dragIndex, 1)
-    newOrder.splice(index, 0, draggedItem)
-    setSelectedPages(newOrder)
-    setDragIndex(index)
-  }
-
-  const handleDragEnd = () => {
-    setDragIndex(null)
-  }
-
-  const handleReorder = async () => {
-    if (selectedPages.length < 2) {
-      toast.warning('Sélectionnez au moins 2 pages pour réorganiser')
-      return
-    }
-
-    setLoading(true)
-    try {
-      await reorderPages(fileId, selectedPages)
-      toast.success('Pages réordonnées')
-      onSaved?.()
-    } catch (err) {
-      toast.error(err.response?.data?.detail || 'Erreur réorganisation')
-    } finally {
-      setLoading(false)
-    }
+  const removeSelected = async () => {
+    setConfirmDelete(false)
+    await run(() => deletePages(fileId, selected), `${selected.length} page(s) supprimée(s)`)
+    setSelected([])
   }
 
   return (
-    <Panel
-      title="Gestion des pages"
-      icon={RotateCw}
-      maxHeight="max-h-[480px]"
-      onClose={onClose}
-    >
-      {/* Quick actions */}
-      <div className="flex flex-wrap gap-2">
-        <span className="text-2xs font-semibold text-ink-muted w-full mb-1">Rotation rapide</span>
-        {[90, 180, 270].map(deg => (
-          <Button
-            key={deg}
-            variant="secondary"
-            size="sm"
-            onClick={() => handleRotateAll(deg)}
-            disabled={loading}
+    <>
+      <Panel title="Organiser les pages" icon={RotateCw} maxHeight="max-h-[540px]" onClose={onClose}>
+        <div className="rounded-lg border border-border bg-surface-raised/60 p-2.5 text-[11px] leading-relaxed text-ink-muted">
+          Sélectionnez des pages pour les pivoter ou les supprimer. Faites glisser les vignettes pour modifier l’ordre complet du document.
+        </div>
+
+        <div className="flex items-center justify-between">
+          <span className="text-2xs font-semibold text-ink-muted">{selected.length} sur {totalPages} sélectionnée(s)</span>
+          <button
+            type="button"
+            onClick={() => setSelected(selected.length === totalPages ? [] : [...order])}
+            className="text-2xs font-medium text-brand hover:underline"
           >
-            <RotateCw size={12} className={deg === 90 ? '' : deg === 180 ? 'rotate-90' : ''} />
-            {deg}°
-          </Button>
-        ))}
-      </div>
+            {selected.length === totalPages ? 'Tout désélectionner' : 'Tout sélectionner'}
+          </button>
+        </div>
 
-      {/* Page selection */}
-      <div className="flex items-center justify-between">
-        <span className="text-2xs font-semibold text-ink-muted">
-          Pages ({selectedPages.length}/{totalPages} sélectionnées)
-        </span>
-        <button
-          onClick={selectAll}
-          className="text-2xs text-brand hover:underline"
-        >
-          {selectedPages.length === totalPages ? 'Tout désélectionner' : 'Tout sélectionner'}
-        </button>
-      </div>
+        <div className="grid max-h-44 grid-cols-6 gap-1.5 overflow-y-auto pr-1">
+          {order.map(page => {
+            const isSelected = selectedSet.has(page)
+            const isCurrent = page === currentPage - 1
+            return (
+              <div
+                key={page}
+                draggable={!loading}
+                onDragStart={() => setDragged(page)}
+                onDragOver={event => { event.preventDefault(); moveDraggedBefore(page) }}
+                onDragEnd={() => setDragged(null)}
+                className={[
+                  'group relative flex h-14 cursor-grab flex-col items-center justify-center rounded-lg border bg-white transition-all active:cursor-grabbing',
+                  isSelected ? 'border-brand bg-brand-light' : 'border-border hover:border-brand/50',
+                  isCurrent ? 'ring-2 ring-brand ring-offset-1' : '',
+                  dragged === page ? 'opacity-40' : '',
+                ].join(' ')}
+              >
+                <button type="button" onClick={() => toggle(page)} className="absolute inset-0" aria-label={`Sélectionner la page ${page + 1}`} />
+                <GripVertical size={11} className="absolute right-0.5 top-1 text-ink-faint opacity-0 group-hover:opacity-100" />
+                <span className="text-xs font-semibold text-ink">{page + 1}</span>
+                <span className="text-[8px] text-ink-faint">PAGE</span>
+              </div>
+            )
+          })}
+        </div>
 
-      {/* Page list */}
-      <div className="flex flex-wrap gap-1.5 max-h-40 overflow-y-auto">
-        {Array.from({ length: totalPages }).map((_, i) => {
-          const isSelected = selectedPages.includes(i)
-          const isCurrent = i === currentPage - 1
-          
-          return (
-            <div
-              key={i}
-              draggable={isSelected}
-              onDragStart={(e) => handleDragStart(e, selectedPages.indexOf(i))}
-              onDragOver={(e) => isSelected && handleDragOver(e, selectedPages.indexOf(i))}
-              onDragEnd={handleDragEnd}
-              onClick={() => togglePage(i)}
-              className={[
-                'relative flex flex-col items-center justify-center w-10 h-12 rounded-lg border cursor-pointer transition-all',
-                isCurrent ? 'ring-2 ring-brand ring-offset-1' : '',
-                isSelected
-                  ? 'bg-brand-light border-brand'
-                  : 'bg-white border-border hover:border-brand/40',
-                dragIndex === selectedPages.indexOf(i) ? 'opacity-50' : '',
-              ].join(' ')}
-            >
-              {isSelected && (
-                <GripVertical size={10} className="absolute top-0.5 right-0.5 text-brand" />
-              )}
-              <span className="text-xs font-semibold">{i + 1}</span>
+        {orderChanged && (
+          <div className="flex items-center justify-between gap-2 rounded-lg border border-brand/20 bg-brand-light p-2">
+            <span className="text-[10px] font-medium text-brand">Ordre modifié</span>
+            <div className="flex gap-1.5">
+              <Button size="sm" variant="ghost" onClick={() => setOrder(Array.from({ length: totalPages }, (_, i) => i))}>Annuler</Button>
+              <Button size="sm" onClick={applyOrder} loading={loading}>Enregistrer l’ordre</Button>
             </div>
-          )
-        })}
-      </div>
+          </div>
+        )}
 
-      {/* Actions on selected pages */}
-      {selectedPages.length > 0 && (
-        <div className="flex flex-col gap-2 pt-2 border-t border-border">
-          <span className="text-2xs font-semibold text-ink-muted">
-            Actions sur {selectedPages.length} page(s) sélectionnée(s)
-          </span>
-          
+        <div className="border-t border-border pt-3">
+          <p className="mb-2 text-2xs font-semibold text-ink-muted">Rotation</p>
           <div className="flex flex-wrap gap-2">
-            {[90, 180, 270].map(deg => (
+            {[90, 180, 270].map(degrees => (
               <Button
-                key={deg}
+                key={degrees}
                 variant="secondary"
                 size="sm"
-                onClick={() => selectedPages.forEach(p => handleRotateSingle(p, deg))}
-                disabled={loading}
+                disabled={loading || !selected.length}
+                onClick={() => rotateSelection(degrees)}
               >
-                Rotation {deg}°
+                <RotateCw size={12} /> {degrees}°
               </Button>
             ))}
+            <Button variant="ghost" size="sm" disabled={loading} onClick={() => run(() => rotateAllPages(fileId, 90), 'Toutes les pages pivotées')}>
+              Tout pivoter 90°
+            </Button>
           </div>
-
-          {selectedPages.length >= 2 && (
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={handleReorder}
-              disabled={loading}
-            >
-              <GripVertical size={12} />
-              Réorganiser dans cet ordre
-            </Button>
-          )}
-
-          {selectedPages.length < totalPages && (
-            <Button
-              variant="danger"
-              size="sm"
-              onClick={handleDeleteSelected}
-              disabled={loading}
-            >
-              <Trash2 size={12} />
-              Supprimer {selectedPages.length} page(s)
-            </Button>
-          )}
         </div>
-      )}
-    </Panel>
+
+        <Button
+          variant="danger"
+          size="sm"
+          disabled={loading || !selected.length || selected.length >= totalPages}
+          onClick={() => setConfirmDelete(true)}
+        >
+          <Trash2 size={12} /> Supprimer {selected.length || ''} page{selected.length > 1 ? 's' : ''}
+        </Button>
+      </Panel>
+
+      <ConfirmDialog
+        open={confirmDelete}
+        title="Supprimer définitivement ces pages ?"
+        description={`${selected.length} page(s) seront retirées du document. Cette action ne peut pas être annulée.`}
+        confirmLabel="Supprimer les pages"
+        onConfirm={removeSelected}
+        onCancel={() => setConfirmDelete(false)}
+      />
+    </>
   )
 }

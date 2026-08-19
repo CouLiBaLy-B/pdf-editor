@@ -15,6 +15,8 @@ const SCALE_PRESETS = [
   { label: '125%', value: 1.25 },
   { label: '150%', value: 1.5 },
   { label: '200%', value: 2.0 },
+  { label: '250%', value: 2.5 },
+  { label: '300%', value: 3.0 },
 ]
 
 const DEFAULT_SCALE = 1.5
@@ -28,6 +30,7 @@ export default function PDFViewer({
   onTotalPages,
   onPageRendered,
   onTextItems,
+  onError,
   scale: externalScale,
   onScaleChange,
 }) {
@@ -73,6 +76,7 @@ export default function PDFViewer({
         setDocLoaded(d => d + 1)
       } catch (err) {
         console.error('Erreur chargement PDF:', err)
+        onError?.(err)
         setLoading(false)
       }
     }
@@ -86,7 +90,7 @@ export default function PDFViewer({
         docRef.current = null
       }
     }
-  }, [fileUrl, onTotalPages])
+  }, [fileUrl, onTotalPages, onError])
 
   // Render the current page
   useEffect(() => {
@@ -146,12 +150,6 @@ export default function PDFViewer({
           try {
             const textContent = await page.getTextContent()
             if (!cancelled && onTextItems) {
-              // Add viewport to text items for coordinate conversion
-              const itemsWithViewport = {
-                items: textContent.items,
-                viewport,
-                scale,
-              }
               onTextItems(textContent.items, viewport)
             }
           } catch (_) {

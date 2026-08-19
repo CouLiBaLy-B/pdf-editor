@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
-import { deleteAccount } from '../services/api'
+import { deleteAccount, exportAccount } from '../services/api'
+import { toast } from 'sonner'
 import { AppLogo, ConfirmDialog } from '../components/ui/index.js'
 
 export default function SettingsPage() {
@@ -14,6 +15,21 @@ export default function SettingsPage() {
     await deleteAccount()
     signout()
     navigate('/')
+  }
+
+  const handleExport = async () => {
+    try {
+      const data = await exportAccount()
+      const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }))
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `pdfpro-donnees-${new Date().toISOString().slice(0, 10)}.json`
+      link.click()
+      URL.revokeObjectURL(url)
+      toast.success('Export de vos données téléchargé')
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'Export impossible')
+    }
   }
 
   const navItem = (id, label) => (
@@ -49,10 +65,14 @@ export default function SettingsPage() {
                 <label className="text-xs text-ink-muted block mb-1">Email</label>
                 <p className="text-sm text-ink font-medium">{user?.email}</p>
               </div>
-              <Link to="/reset-password"
-                className="inline-block text-sm text-brand hover:underline">
-                Changer le mot de passe →
-              </Link>
+              <div className="flex flex-wrap gap-4">
+                <Link to="/reset-password" className="text-sm text-brand hover:underline">
+                  Changer le mot de passe →
+                </Link>
+                <button type="button" onClick={handleExport} className="text-sm text-brand hover:underline">
+                  Exporter mes données →
+                </button>
+              </div>
             </div>
           )}
 

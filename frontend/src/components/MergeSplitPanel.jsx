@@ -4,9 +4,9 @@ import { toast } from 'sonner'
 import { mergePdfs, splitPdf } from '../services/api'
 import { Panel, Button } from './ui/index.js'
 
-export default function MergeSplitPanel({ mode, file, allFiles, onRefresh }) {
+export default function MergeSplitPanel({ mode, file, allFiles, totalPages, onRefresh, onClose }) {
   const [selectedIds, setSelectedIds] = useState([])
-  const [splitRanges, setSplitRanges] = useState('0,2\n3,4')
+  const [splitRanges, setSplitRanges] = useState('1-1')
   const [loading, setLoading] = useState(false)
 
   const toggleId = (id) =>
@@ -27,25 +27,27 @@ export default function MergeSplitPanel({ mode, file, allFiles, onRefresh }) {
 
   const handleSplit = async () => {
     if (!file) { toast.error("Sélectionnez un fichier d'abord"); return }
-    let ranges
-    try {
-      ranges = splitRanges.split('\n')
-        .map(l => { const [a, b] = l.trim().split(',').map(Number); return [a, b] })
-        .filter(r => r.length === 2 && !isNaN(r[0]) && !isNaN(r[1]))
-    } catch { toast.error('Format invalide'); return }
-    if (!ranges.length) { toast.error('Aucune plage valide'); return }
+    const lines = splitRanges.split('\n').map(line => line.trim()).filter(Boolean)
+    const ranges = lines.map(line => {
+      const match = line.match(/^(\d+)\s*(?:-|à|,)\s*(\d+)$/i)
+      return match ? [Number(match[1]) - 1, Number(match[2]) - 1] : null
+    })
+    if (!ranges.length || ranges.some(range => !range || range[0] < 0 || range[1] < range[0] || (totalPages && range[1] >= totalPages))) {
+      toast.error(`Utilisez une plage par ligne, par exemple 1-3${totalPages ? ` (maximum ${totalPages})` : ''}`)
+      return
+    }
     setLoading(true)
     try {
-      const results = await splitPdf(file.id, ranges)
-      toast.success(`${results.length} partie(s) créée(s)`)
-      onRefresh?.()
+      const { files } = await splitPdf(file.id, ranges)
+      toast.success(`${files.length} partie(s) créée(s)`)
+      await onRefresh?.()
     } catch (err) {
       toast.error(err.response?.data?.detail || err.message)
     } finally { setLoading(false) }
   }
 
   if (mode === 'merge') return (
-    <Panel title="Combiner des PDFs" icon={Link2} maxHeight="max-h-[360px]">
+    <Panel title="Combiner des PDFs" icon={Link2} maxHeight="max-h-[360px]" onClose={onClose}>
       <div className="flex flex-col gap-1.5">
         <span className="text-2xs font-bold text-ink-muted uppercase tracking-wider">
           Fichiers à combiner
@@ -98,25 +100,25 @@ export default function MergeSplitPanel({ mode, file, allFiles, onRefresh }) {
   )
 
   if (mode === 'split') return (
-    <Panel title={file?.name ? `Séparer : ${file.name}` : 'Séparer le PDF'} icon={Scissors} maxHeight="max-h-72">
+    <Panel title={file?.name ? `Séparer : ${file.name}` : 'Séparer le PDF'} icon={Scissors} maxHeight="max-h-72" onClose={onClose}>
       <div className="flex gap-3">
         <div className="flex-1 flex flex-col gap-1.5">
           <label htmlFor="split-ranges" className="text-2xs font-bold text-ink-muted uppercase tracking-wider">
-            Plages de pages (début,fin)
+            Plages de pages
           </label>
           <textarea
             id="split-ranges"
             className="w-full bg-surface-raised text-ink border border-border rounded-lg p-2.5 text-xs font-mono resize-none h-20 focus:border-brand/50 focus:outline-none focus:ring-1 focus:ring-brand/20 transition-colors"
             value={splitRanges}
             onChange={e => setSplitRanges(e.target.value)}
-            placeholder={'0,2\n3,5'}
+            placeholder={'1-3\n4-6'}
           />
         </div>
         <div className="text-2xs text-ink-faint bg-surface-raised rounded-lg p-2.5 border border-border leading-relaxed shrink-0 self-end">
           <p className="font-semibold text-ink-muted mb-1.5">Exemples</p>
-          <p className="font-mono">0,2 → pages 1–3</p>
-          <p className="font-mono">3,5 → pages 4–6</p>
-          <p className="mt-1 opacity-60">Indexé à 0</p>
+          <p className="font-mono">1-3 → pages 1 à 3</p>
+          <p className="font-mono">4-6 → pages 4 à 6</p>
+          <p className="mt-1 opacity-60">{totalPages || '—'} page(s) au total</p>
         </div>
       </div>
       <Button variant="primary" size="sm" onClick={handleSplit} loading={loading}>

@@ -13,7 +13,7 @@ from jose import JWTError, jwt
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
-from database import User, get_db
+from database import PDFFile, ShareLink, Transaction, User, get_db
 from auth import hash_password, verify_password, create_access_token, get_current_user, SECRET_KEY, ALGORITHM
 from services.email import send_reset_email, send_welcome_email
 
@@ -31,6 +31,7 @@ router = APIRouter()
 class RegisterRequest(BaseModel):
     email: EmailStr
     password: str
+    accepted_terms: bool = False
 
 
 class ForgotPasswordRequest(BaseModel):
@@ -51,6 +52,9 @@ class PromoteRequest(BaseModel):
 @limiter.limit("5/minute")  # 5 registrations per minute max
 def register(request: Request, body: RegisterRequest, db: Session = Depends(get_db)):
     """Register a new user account."""
+    if not body.accepted_terms:
+        raise HTTPException(status_code=422, detail="Vous devez accepter les CGU et la politique de confidentialité")
+
     # Check if email already exists
     existing_user = db.query(User).filter(User.email == body.email).first()
     if existing_user:
@@ -68,7 +72,8 @@ def register(request: Request, body: RegisterRequest, db: Session = Depends(get_
         id=str(uuid.uuid4()),
         email=body.email,
         hashed_password=hash_password(body.password),
-        credits=10  # 10 free credits on signup
+        credits=10,  # 10 free credits on signup
+        terms_accepted_at=datetime.now(timezone.utc),
     )
     db.add(user)
     db.commit()
@@ -77,12 +82,12 @@ def register(request: Request, body: RegisterRequest, db: Session = Depends(get_
     try:
         send_welcome_email(user.email)
     except Exception as e:
-        logger.warning(f"Failed to send welcome email to {user.email}: {e}")
-    
-    logger.info(f"New user registered: {user.email}")
+        logger.warning("Welcome email failed for user %s", user.id)
+
+    logger.info("User registered: %s", user.id)
     
     return {
-        "access_token": create_access_token(user.id),
+        "access_token": create_access_token(user.id, user.token_version),
         "token_type": "bearer",
         "credits": user.credits
     }
@@ -98,10 +103,10 @@ def login(request: Request, form: OAuth2PasswordRequestForm = Depends(), db: Ses
         # Small delay to mitigate timing attacks
         raise HTTPException(status_code=401, detail="Email ou mot de passe incorrect")
     
-    logger.info(f"User logged in: {user.email}")
+    logger.info("User logged in: %s", user.id)
     
     return {
-        "access_token": create_access_token(user.id),
+        "access_token": create_access_token(user.id, user.token_version),
         "token_type": "bearer",
         "credits": user.credits
     }
@@ -132,9 +137,38 @@ def promote_admin(body: PromoteRequest, db: Session = Depends(get_db)):
     user.is_admin = 1
     db.commit()
     
-    logger.info(f"User promoted to admin: {user.email}")
+    logger.info("User promoted to admin: %s", user.id)
     
     return {"message": f"{user.email} est maintenant admin"}
+
+
+@router.get("/export")
+def export_account(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Export portable des données de compte, sans secrets ni contenu documentaire."""
+    files = db.query(PDFFile).filter(PDFFile.user_id == user.id).all()
+    transactions = db.query(Transaction).filter(Transaction.user_id == user.id).all()
+    shares = db.query(ShareLink).filter(ShareLink.user_id == user.id).all()
+    return {
+        "exported_at": datetime.now(timezone.utc).isoformat(),
+        "account": {
+            "id": user.id, "email": user.email, "credits": user.credits,
+            "created_at": user.created_at.isoformat() if user.created_at else None,
+            "terms_accepted_at": user.terms_accepted_at.isoformat() if user.terms_accepted_at else None,
+        },
+        "files": [{
+            "id": file.id, "name": file.name, "size_bytes": file.size_bytes,
+            "created_at": file.created_at.isoformat() if file.created_at else None,
+            "last_accessed_at": file.last_accessed_at.isoformat() if file.last_accessed_at else None,
+        } for file in files],
+        "transactions": [{
+            "id": tx.id, "type": tx.type, "credits_delta": tx.credits_delta,
+            "file_id": tx.file_id, "created_at": tx.created_at.isoformat() if tx.created_at else None,
+        } for tx in transactions],
+        "share_links": [{
+            "id": share.id, "file_id": share.file_id,
+            "created_at": share.created_at.isoformat() if share.created_at else None,
+        } for share in shares],
+    }
 
 
 @router.delete("/me")
@@ -142,19 +176,23 @@ def delete_account(user: User = Depends(get_current_user), db: Session = Depends
     """Delete user account and all associated files."""
     from services.r2_storage import delete_file as r2_delete
     
-    # Delete all user files
-    for f in user.files:
+    # Ne supprimer les métadonnées qu'après confirmation du stockage : cela
+    # garantit le droit à l'effacement sans créer d'objets orphelins.
+    failed_files = []
+    for file in user.files:
         try:
-            r2_delete(f.id)
-        except Exception as e:
-            logger.warning(f"Failed to delete file {f.id}: {e}")
-    
-    # Delete user from database
-    user_email = user.email
+            r2_delete(file.id)
+        except Exception:
+            failed_files.append(file.id)
+            logger.exception("Failed to delete file %s during account deletion", file.id)
+    if failed_files:
+        raise HTTPException(status_code=503, detail="Suppression temporairement impossible, veuillez réessayer")
+
+    user_id = user.id
     db.delete(user)
     db.commit()
-    
-    logger.info(f"Account deleted: {user_email}")
+
+    logger.info("Account deleted: %s", user_id)
     
     return {"message": "Compte supprimé"}
 
@@ -168,14 +206,14 @@ def forgot_password(request: Request, body: ForgotPasswordRequest, db: Session =
     if user:
         expire = datetime.now(timezone.utc) + timedelta(minutes=15)
         token = jwt.encode(
-            {"sub": user.id, "type": "reset", "exp": expire},
+            {"sub": user.id, "type": "reset", "ver": user.token_version, "exp": expire},
             SECRET_KEY,
             algorithm=ALGORITHM
         )
         try:
             send_reset_email(user.email, token)
         except Exception as e:
-            logger.warning(f"Failed to send reset email to {user.email}: {e}")
+            logger.warning("Password reset email failed for user %s", user.id)
     
     # Always return success to prevent email enumeration
     return {"message": "Si cet email existe, un lien a été envoyé"}
@@ -189,13 +227,14 @@ def reset_password(body: ResetPasswordRequest, db: Session = Depends(get_db)):
         if payload.get("type") != "reset":
             raise HTTPException(status_code=400, detail="Token invalide")
         user_id = payload.get("sub")
+        token_version = payload.get("ver")
     except JWTError:
         raise HTTPException(status_code=400, detail="Token invalide ou expiré")
     
     user = db.query(User).filter(User.id == user_id).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="Utilisateur introuvable")
-    
+    if not user or token_version != user.token_version:
+        raise HTTPException(status_code=400, detail="Token invalide ou déjà utilisé")
+
     if len(body.new_password) < 8:
         raise HTTPException(status_code=422, detail="Mot de passe trop court")
     
@@ -203,8 +242,9 @@ def reset_password(body: ResetPasswordRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=422, detail="Mot de passe trop long")
     
     user.hashed_password = hash_password(body.new_password)
+    user.token_version += 1
     db.commit()
     
-    logger.info(f"Password reset for user: {user.email}")
+    logger.info("Password reset for user: %s", user.id)
     
     return {"message": "Mot de passe mis à jour"}

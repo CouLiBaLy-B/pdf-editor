@@ -1,4 +1,4 @@
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { AppLogo } from '../components/ui/index.js'
 import {
@@ -26,7 +26,7 @@ const PACKS = [
 
 const TRUST = [
   { Icon: Zap,    label: 'Traitement instantané' },
-  { Icon: Shield, label: 'Fichiers chiffrés' },
+  { Icon: Shield, label: 'Accès sécurisé' },
   { Icon: Globe,  label: '100% en ligne' },
 ]
 
@@ -172,7 +172,7 @@ export default function LandingPage() {
       {/* CTA bottom */}
       <section className="py-16 px-6 bg-ink text-white text-center">
         <h2 className="text-2xl font-bold mb-3">Prêt à éditer vos PDFs ?</h2>
-        <p className="text-sm text-white/60 mb-6">5 crédits offerts à l'inscription. Aucune carte requise.</p>
+        <p className="text-sm text-white/60 mb-6">10 crédits offerts à l'inscription. Aucune carte requise.</p>
         <button onClick={goApp}
           className="inline-flex items-center gap-2 px-6 py-3 bg-brand text-white font-semibold rounded-xl hover:bg-brand-dim transition-colors text-sm">
           Commencer gratuitement <ArrowRight size={15} />
@@ -186,7 +186,9 @@ export default function LandingPage() {
           <div className="flex items-center gap-6 text-xs text-ink-muted">
             <a href="#features" className="hover:text-ink transition-colors">Fonctionnalités</a>
             <a href="#pricing" className="hover:text-ink transition-colors">Tarifs</a>
-            <button onClick={() => navigate('/login')} className="hover:text-ink transition-colors">Connexion</button>
+            <Link to="/terms" className="hover:text-ink transition-colors">CGU</Link>
+            <Link to="/privacy" className="hover:text-ink transition-colors">Confidentialité</Link>
+            <Link to="/legal" className="hover:text-ink transition-colors">Mentions légales</Link>
           </div>
           <p className="text-xs text-ink-faint">© 2026 PDFPro</p>
         </div>

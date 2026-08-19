@@ -7,7 +7,7 @@ backend/uploads/
 # Node
 node_modules
 .env
-*.db/
+*.db
 frontend/dist/
 frontend/.env
 

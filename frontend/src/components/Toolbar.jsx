@@ -63,7 +63,7 @@ function ToolBtn({ id, Icon, label, isActive, isDisabled, collapsed, onClick }) 
 export default function Toolbar({
   activeTool, onToolChange,
   currentPage, totalPages, onPrevPage, onNextPage,
-  hasFile, collapsed, canUndo, canRedo,
+  hasFile, collapsed,
 }) {
   return (
     <nav

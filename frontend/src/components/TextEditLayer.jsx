@@ -1,71 +1,60 @@
-import React, { useState, useRef, useCallback } from "react"
-import { replaceText } from "../services/api"
-import { useDebouncedCallback } from "../hooks/useDebounce"
+import React, { useMemo, useRef, useState } from 'react'
+import { toast } from 'sonner'
+import { replaceText } from '../services/api'
 
-/**
- * Group text items into text blocks based on position and font size.
- * Items that are on the same line (within fontSize * 0.4 tolerance) are merged.
- */
 function groupTextItems(items) {
   const blocks = []
-  
   for (const item of items) {
-    if (!item.str || !item.str.trim()) continue
-    
+    if (!item.str?.trim()) continue
     const x = item.transform[4]
     const y = item.transform[5]
-    const fontSize = Math.abs(item.transform[3]) || Math.abs(item.transform[0]) || 10
-    const width = item.width || 0
-    
-    // Find a block on the same line
-    const same = blocks.find(b =>
-      Math.abs(b.y_pdf_baseline - y) < fontSize * 0.4 &&
-      x >= b.x_pdf + b.width_pdf - fontSize * 0.5 &&
-      x <= b.x_pdf + b.width_pdf + fontSize * 2
-    )
-    
-    if (same) {
-      // Extend the existing block
-      same.str += item.str
-      same.width_pdf = Math.max(same.width_pdf, (x + width) - same.x_pdf)
+    const fontSize = Math.abs(item.transform[3]) || Math.abs(item.transform[0]) || item.height || 10
+    const width = Math.max(item.width || 0, 1)
+    const previous = blocks.at(-1)
+    const gap = previous ? x - (previous.x_pdf + previous.width_pdf) : Infinity
+    const sameLine = previous && Math.abs(previous.y_pdf_baseline - y) < fontSize * 0.35 && gap > -fontSize && gap < fontSize * 1.5
+
+    if (sameLine && !previous.hasEOL) {
+      const needsSpace = gap > fontSize * 0.2 && !previous.str.endsWith(' ') && !item.str.startsWith(' ')
+      previous.str += `${needsSpace ? ' ' : ''}${item.str}`
+      previous.width_pdf = Math.max(previous.width_pdf, x + width - previous.x_pdf)
+      previous.hasEOL = Boolean(item.hasEOL)
     } else {
-      // Create a new block
       blocks.push({
         str: item.str,
         x_pdf: x,
         y_pdf_baseline: y,
-        width_pdf: Math.max(width, 1),
-        fontSize_pdf: fontSize
+        width_pdf: width,
+        fontSize_pdf: fontSize,
+        hasEOL: Boolean(item.hasEOL),
       })
     }
   }
-  
-  return blocks.filter(b => b.str.trim().length > 0)
+  return blocks
 }
 
-/**
- * Individual text block that can be edited inline.
- */
 function TextBlock({ block, viewport, fileId, currentPage, onSaved }) {
-  const divRef = useRef(null)
-  const originalStr = useRef(block.str)
-  const [hovered, setHovered] = useState(false)
+  const cancelledRef = useRef(false)
+  const savingRef = useRef(false)
   const [editing, setEditing] = useState(false)
+  const [value, setValue] = useState(block.str)
   const [saving, setSaving] = useState(false)
-  
-  // Calculate position in canvas coordinates
-  const xCanvas = viewport.convertToViewportPoint(block.x_pdf, block.y_pdf_baseline)[0]
-  const yBaselineCanvas = viewport.convertToViewportPoint(block.x_pdf, block.y_pdf_baseline)[1]
-  const fontSizeCanvas = block.fontSize_pdf * viewport.scale
-  const top = yBaselineCanvas - fontSizeCanvas * 0.85
-  const left = xCanvas
-  const width = Math.max(block.width_pdf * viewport.scale, 30)
-  const height = fontSizeCanvas * 1.35
 
-  // Debounced save function
-  const debouncedSave = useDebouncedCallback(async (newVal) => {
-    if (newVal === originalStr.current) return
-    
+  const [left, baseline] = viewport.convertToViewportPoint(block.x_pdf, block.y_pdf_baseline)
+  const fontSize = Math.max(8, block.fontSize_pdf * viewport.scale)
+  const width = Math.max(block.width_pdf * viewport.scale, 36)
+  const height = fontSize * 1.45
+  const top = baseline - fontSize * 0.92
+
+  const save = async () => {
+    if (cancelledRef.current) {
+      cancelledRef.current = false
+      setValue(block.str)
+      return
+    }
+    const cleanValue = value.replace(/\n/g, ' ')
+    if (cleanValue === block.str || savingRef.current) return
+    savingRef.current = true
     setSaving(true)
     try {
       await replaceText(fileId, {
@@ -73,149 +62,67 @@ function TextBlock({ block, viewport, fileId, currentPage, onSaved }) {
         x_pdf: block.x_pdf,
         y_pdf_baseline: block.y_pdf_baseline,
         width_pdf: block.width_pdf,
-        new_text: newVal,
+        new_text: cleanValue,
         font_size: block.fontSize_pdf,
         color: [0, 0, 0],
       })
-      originalStr.current = newVal
-      onSaved && onSaved()
-    } catch (err) {
-      console.error("Erreur replace-text:", err)
-      // Revert to original text on error
-      if (divRef.current) {
-        divRef.current.innerText = originalStr.current
-      }
+      toast.success(cleanValue ? 'Texte mis à jour' : 'Texte supprimé')
+      await onSaved?.()
+    } catch (error) {
+      setValue(block.str)
+      toast.error(error.response?.data?.detail || 'La modification du texte a échoué')
     } finally {
+      savingRef.current = false
       setSaving(false)
     }
-  }, 800) // 800ms debounce delay
-
-  const handleFocus = () => {
-    setEditing(true)
-    setHovered(false)
-    // Select all text on focus
-    setTimeout(() => {
-      if (divRef.current) {
-        const range = document.createRange()
-        range.selectNodeContents(divRef.current)
-        const sel = window.getSelection()
-        sel.removeAllRanges()
-        sel.addRange(range)
-      }
-    }, 0)
   }
 
-  const handleBlur = () => {
-    setEditing(false)
-    const newVal = divRef.current?.innerText ?? ""
-    debouncedSave(newVal)
-  }
-
-  const handleKeyDown = (e) => {
-    // Enter saves and exits editing
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault()
-      divRef.current?.blur()
-    }
-    // Escape reverts changes
-    if (e.key === "Escape") {
-      if (divRef.current) {
-        divRef.current.innerText = originalStr.current
-      }
-      divRef.current?.blur()
-    }
+  if (editing) {
+    return (
+      <input
+        autoFocus
+        value={value}
+        disabled={saving}
+        onChange={event => setValue(event.target.value)}
+        onBlur={() => { setEditing(false); save() }}
+        onKeyDown={event => {
+          event.stopPropagation()
+          if (event.key === 'Enter') event.currentTarget.blur()
+          if (event.key === 'Escape') {
+            cancelledRef.current = true
+            event.currentTarget.blur()
+          }
+        }}
+        aria-label={`Modifier le texte : ${block.str}`}
+        className="absolute rounded border-2 border-brand bg-white px-1 text-slate-950 shadow-xl outline-none ring-2 ring-brand/10 disabled:cursor-wait"
+        style={{ left, top, width: Math.max(width + 24, 100), height, fontSize, lineHeight: `${height}px`, zIndex: 20 }}
+      />
+    )
   }
 
   return (
-    <div
-      ref={divRef}
-      contentEditable
-      suppressContentEditableWarning
-      onMouseEnter={() => !editing && setHovered(true)}
-      onMouseLeave={() => !editing && setHovered(false)}
-      onFocus={handleFocus}
-      onBlur={handleBlur}
-      onKeyDown={handleKeyDown}
-      title={editing ? "Entrée pour sauvegarder, Échap pour annuler" : "Cliquer pour modifier"}
-      style={{
-        position: "absolute",
-        left,
-        top,
-        minWidth: width,
-        height,
-        fontSize: fontSizeCanvas,
-        lineHeight: `${height}px`,
-        fontFamily: "serif",
-        color: editing ? "#000000" : "transparent",
-        background: editing ? "rgba(255,255,255,0.97)" : "transparent",
-        border: editing
-          ? "2px solid #00b386"  // Brand color when editing
-          : hovered
-            ? "1px dashed rgba(0, 179, 134, 0.9)"
-            : "1px solid transparent",
-        padding: "0 2px",
-        outline: "none",
-        cursor: editing ? "text" : "pointer",
-        whiteSpace: "pre",
-        pointerEvents: "auto",
-        zIndex: editing ? 20 : 5,
-        borderRadius: "2px",
-        boxSizing: "border-box",
-        userSelect: editing ? "text" : "none",
-        transition: "border 0.1s, box-shadow 0.1s",
-        boxShadow: editing ? "0 2px 12px rgba(0,0,0,0.15)" : "none",
-      }}
+    <button
+      type="button"
+      onClick={() => setEditing(true)}
+      title={`Modifier « ${block.str} »`}
+      aria-label={`Modifier le texte : ${block.str}`}
+      className="absolute rounded-sm border border-transparent bg-transparent hover:border-dashed hover:border-brand focus-visible:border-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30"
+      style={{ left, top, width, height, pointerEvents: 'auto', cursor: 'text' }}
     >
-      {/* Show text overlay when not editing */}
-      {!editing && (
-        <span style={{
-          color: "#111827",
-          userSelect: "none",
-          pointerEvents: "none",
-        }}>
-          {block.str}
-        </span>
-      )}
-      
-      {/* Saving indicator */}
-      {saving && (
-        <span style={{
-          position: "absolute",
-          top: -20,
-          right: 0,
-          fontSize: 10,
-          color: "#6b7280",
-          fontFamily: "sans-serif",
-        }}>
-          Sauvegarde...
-        </span>
-      )}
-    </div>
+      {saving && <span className="absolute -top-5 right-0 rounded bg-slate-900 px-1.5 py-0.5 text-[9px] text-white">Sauvegarde…</span>}
+    </button>
   )
 }
 
-/**
- * TextEditLayer - Overlay for editing text in PDF.
- * Groups text items into editable blocks with debounced saving.
- */
 export default function TextEditLayer({ fileId, currentPage, textItems, viewport, canvasSize, onSaved }) {
-  if (!textItems?.length || !viewport || !canvasSize) return null
-  
-  const blocks = groupTextItems(textItems)
-  
-  if (blocks.length === 0) return null
-  
+  const blocks = useMemo(() => groupTextItems(textItems || []), [textItems])
+  if (!blocks.length || !viewport || !canvasSize) return null
+
   return (
-    <div
-      style={{
-        position: "absolute",
-        top: 0,
-        left: 0,
-        width: canvasSize.width,
-        height: canvasSize.height,
-        pointerEvents: "none",
-      }}
-    >
+    <div className="absolute inset-0" style={{ width: canvasSize.width, height: canvasSize.height, pointerEvents: 'none', zIndex: 10 }}>
+      <div className="absolute left-1/2 top-4 -translate-x-1/2 rounded-lg bg-slate-900/90 px-3 py-2 text-xs font-medium text-white shadow-lg">
+        Cliquez sur un texte pour le modifier
+      </div>
       {blocks.map((block, index) => (
         <TextBlock
           key={`${currentPage}-${block.x_pdf.toFixed(2)}-${block.y_pdf_baseline.toFixed(2)}-${index}`}

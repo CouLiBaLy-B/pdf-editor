@@ -78,6 +78,7 @@ Le déploiement se fait automatiquement à chaque push sur `main`.
 | `POST` | `/api/auth/register` | Inscription |
 | `POST` | `/api/auth/login` | Connexion |
 | `GET` | `/api/auth/me` | Profil + solde crédits |
+| `GET` | `/api/auth/export` | Exporter les données du compte |
 | `GET` | `/api/files/` | Lister les fichiers |
 | `POST` | `/api/files/upload` | Uploader un PDF |
 | `GET` | `/api/files/{id}/download` | Télécharger |
@@ -88,6 +89,7 @@ Le déploiement se fait automatiquement à chaque push sur `main`.
 | `POST` | `/api/files/{id}/sign` | Signer (1 crédit) |
 | `POST` | `/api/files/{id}/rotate-page` | Rotation page (1 crédit) |
 | `POST` | `/api/files/{id}/rotate-all` | Rotation toutes pages (1 crédit) |
+| `POST` | `/api/files/{id}/rotate-pages` | Rotation d'une sélection de pages (1 crédit) |
 | `POST` | `/api/files/{id}/delete-pages` | Supprimer pages (1 crédit) |
 | `POST` | `/api/files/{id}/reorder-pages` | Réorganiser pages (1 crédit) |
 | `POST` | `/api/files/{id}/compress` | Compresser (1 crédit) |
@@ -99,8 +101,21 @@ Le déploiement se fait automatiquement à chaque push sur `main`.
 | `GET` | `/api/billing/balance` | Solde de crédits |
 | `GET` | `/api/billing/history` | Historique transactions |
 | `POST` | `/api/billing/webhook` | Webhook Stripe |
+| `POST` | `/api/files/{id}/share` | Créer un lien de partage 7 jours |
+| `DELETE` | `/api/files/{id}/share` | Révoquer les liens de partage |
+| `GET` | `/health/ready` | Disponibilité base + stockage |
 
 Documentation interactive : **http://localhost:8000/docs**
+
+## Limites du MVP
+
+- PDF importé : **50 Mo et 300 pages maximum**
+- Fusion : **20 fichiers et 500 pages maximum**
+- OCR : **30 pages maximum par opération**
+- Export PNG : **100 pages maximum**
+- Image insérée : **10 Mo maximum**
+
+La feuille de route est détaillée dans [`PLAN_MVP_VERS_PRODUCTION.md`](./PLAN_MVP_VERS_PRODUCTION.md) et les procédures d'exploitation dans [`RUNBOOK_PRODUCTION.md`](./RUNBOOK_PRODUCTION.md).
 
 ## Tests
 
@@ -127,12 +142,12 @@ npx playwright test
 - ✅ Timing-attack safe comparison
 - ✅ JWT avec expiration 7 jours
 
-## Raccourcis clavier
+## Édition de texte
 
-| Raccourci | Action |
-|-----------|--------|
-| `Ctrl/Cmd + Z` | Annuler |
-| `Ctrl/Cmd + Shift + Z` | Rétablir |
-| `Ctrl/Cmd + Y` | Rétablir (alternatif) |
+| Interaction | Action |
+|-------------|--------|
+| Clic sur une zone de texte | Ouvrir l'édition inline |
 | `Entrée` | Sauvegarder le texte |
 | `Échap` | Annuler l'édition |
+
+Les modifications sont inscrites directement dans le PDF. L'ancien contenu texte est réellement supprimé (rédaction PDF), et non simplement masqué visuellement.
