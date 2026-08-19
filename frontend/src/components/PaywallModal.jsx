@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { toast } from 'sonner'
 import { createTopup } from '../services/api'
 import { X, Zap, Loader2, CheckCircle2 } from 'lucide-react'
 
@@ -18,7 +19,10 @@ export default function PaywallModal({ isOpen, onClose, message }) {
     try {
       const { url } = await createTopup(pack)
       window.location.href = url
-    } catch { setLoading(null) }
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'Impossible d’ouvrir le paiement')
+      setLoading(null)
+    }
   }
 
   return (

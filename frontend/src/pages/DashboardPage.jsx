@@ -29,20 +29,38 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(null)
   const navigate = useNavigate()
   const [params] = useSearchParams()
+  const topupSuccess = params.get('topup') === 'success'
 
   useEffect(() => {
-    if (params.get('topup') === 'success') toast.success('Crédits ajoutés !')
-    getBalance().then(d => setBalance(d.credits))
-    getBillingHistory().then(setHistory)
-  }, [])
+    let cancelled = false
+    const load = async () => {
+      try {
+        const [balanceData, transactions] = await Promise.all([getBalance(), getBillingHistory()])
+        if (!cancelled) {
+          setBalance(balanceData.credits)
+          setHistory(transactions)
+        }
+      } catch (error) {
+        if (!cancelled) toast.error(error.response?.data?.detail || 'Impossible de charger la facturation')
+      }
+    }
+    if (topupSuccess) {
+      toast.success('Paiement reçu, votre solde va être actualisé')
+      load()
+      const timers = [1500, 4000].map(delay => setTimeout(load, delay))
+      return () => { cancelled = true; timers.forEach(clearTimeout) }
+    }
+    load()
+    return () => { cancelled = true }
+  }, [topupSuccess])
 
   const handleBuy = async (pack) => {
     setLoading(pack)
     try {
       const { url } = await createTopup(pack)
       window.location.href = url
-    } catch {
-      toast.error('Erreur lors du paiement')
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'Erreur lors du paiement')
       setLoading(null)
     }
   }

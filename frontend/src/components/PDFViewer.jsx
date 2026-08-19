@@ -30,6 +30,7 @@ export default function PDFViewer({
   onTotalPages,
   onPageRendered,
   onTextItems,
+  onError,
   scale: externalScale,
   onScaleChange,
 }) {
@@ -75,6 +76,7 @@ export default function PDFViewer({
         setDocLoaded(d => d + 1)
       } catch (err) {
         console.error('Erreur chargement PDF:', err)
+        onError?.(err)
         setLoading(false)
       }
     }
@@ -88,7 +90,7 @@ export default function PDFViewer({
         docRef.current = null
       }
     }
-  }, [fileUrl, onTotalPages])
+  }, [fileUrl, onTotalPages, onError])
 
   // Render the current page
   useEffect(() => {

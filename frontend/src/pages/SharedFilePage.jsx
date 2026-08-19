@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { AppLogo } from '../components/ui/index.js'
 import PDFViewer from '../components/PDFViewer'
@@ -10,6 +10,8 @@ export default function SharedFilePage() {
   const [currentPage, setCurrentPage] = useState(1)
 
   const fileUrl = `/api/share/${token}`
+  const handleError = useCallback(() => setError(true), [])
+  const noop = useCallback(() => {}, [])
 
   return (
     <div className="min-h-screen bg-surface-base flex flex-col">
@@ -42,9 +44,9 @@ export default function SharedFilePage() {
               fileUrl={fileUrl}
               currentPage={currentPage}
               onTotalPages={setTotalPages}
-              onPageRendered={() => {}}
-              onTextItems={() => {}}
-              onError={() => setError(true)}
+              onPageRendered={noop}
+              onTextItems={noop}
+              onError={handleError}
             />
           </div>
         </div>

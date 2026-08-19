@@ -38,6 +38,8 @@ class TopupRequest(BaseModel):
 
 @router.post("/topup")
 def create_topup(body: TopupRequest, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    if not stripe.api_key:
+        raise HTTPException(status_code=503, detail="Le paiement n'est pas encore configuré")
     if body.pack not in CREDIT_PACKS:
         raise HTTPException(status_code=400, detail="Pack invalide")
     credits, price_cents, label = CREDIT_PACKS[body.pack]
@@ -88,6 +90,8 @@ def get_history(user: User = Depends(get_current_user), db: Session = Depends(ge
 
 @router.post("/webhook")
 async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
+    if not STRIPE_WEBHOOK_SECRET:
+        raise HTTPException(status_code=503, detail="Webhook Stripe non configuré")
     payload = await request.body()
     sig = request.headers.get("stripe-signature", "")
     try:
@@ -99,22 +103,29 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
         session = event["data"]["object"]
         meta = session.get("metadata", {})
         user_id = meta.get("user_id")
-        credits = int(meta.get("credits", 0))
         pack = meta.get("pack", "")
-        if user_id and credits:
-            user = db.query(User).filter(User.id == user_id).first()
-            if user:
-                user.credits += credits
-                tx = Transaction(
-                    id=str(uuid.uuid4()),
-                    user_id=user.id,
-                    type="topup",
-                    credits_delta=credits,
-                    stripe_session_id=session["id"],
-                )
-                db.add(tx)
-                db.commit()
-                _, price_cents, _ = CREDIT_PACKS.get(pack, (0, 0, ""))
-                send_receipt_email(user.email, credits, price_cents / 100)
+        pack_config = CREDIT_PACKS.get(pack)
+        session_id = session.get("id")
+        already_processed = db.query(Transaction).filter(
+            Transaction.stripe_session_id == session_id
+        ).first()
+        if already_processed:
+            return {"received": True, "duplicate": True}
+        if session.get("payment_status") != "paid" or not user_id or not pack_config:
+            return {"received": True, "ignored": True}
+        credits, price_cents, _ = pack_config
+        user = db.query(User).filter(User.id == user_id).first()
+        if user:
+            user.credits += credits
+            tx = Transaction(
+                id=str(uuid.uuid4()),
+                user_id=user.id,
+                type="topup",
+                credits_delta=credits,
+                stripe_session_id=session_id,
+            )
+            db.add(tx)
+            db.commit()
+            send_receipt_email(user.email, credits, price_cents / 100)
 
     return {"received": True}

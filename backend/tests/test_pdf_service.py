@@ -51,6 +51,24 @@ def test_delete_and_reorder_pages(pdf_store):
     doc.close()
 
 
+def test_merge_and_split_return_persistable_metadata(pdf_store):
+    pdf_store["second"] = pdf_store["document"]
+    merged = pdf_service.merge_pdfs(["document", "second"])
+    assert merged["pages"] == 6
+    assert merged["size"] == len(pdf_store[merged["id"]])
+
+    parts = pdf_service.split_pdf("document", [[0, 0], [1, 2]], "contrat")
+    assert [part["pages"] for part in parts] == [1, 2]
+    assert parts[0]["name"] == "contrat-partie-1.pdf"
+    assert all(part["size"] == len(pdf_store[part["id"]]) for part in parts)
+
+
+def test_split_rejects_out_of_bounds_range_before_upload(pdf_store):
+    with pytest.raises(ValueError, match="invalide"):
+        pdf_service.split_pdf("document", [[0, 3]])
+    assert list(pdf_store) == ["document"]
+
+
 def test_rejects_out_of_page_image(pdf_store):
     with pytest.raises(ValueError, match="entièrement"):
         pdf_service.add_image("document", 0, 290, 390, 350, 450, b"not-needed")

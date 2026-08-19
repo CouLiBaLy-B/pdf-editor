@@ -143,34 +143,56 @@ def add_signature(file_id, page_number, x0, y0, x1, y1, signature_b64):
 
 # ─── Fusion ───────────────────────────────────────────────────────────────────
 
-def merge_pdfs(file_ids: list[str], _output_id: str) -> dict:
+def merge_pdfs(file_ids: list[str]) -> dict:
     from services.r2_storage import upload_file
     result = fitz.open()
-    for fid in file_ids:
-        src = _open(fid)
-        result.insert_pdf(src)
-        src.close()
-    new_id = str(uuid.uuid4())
-    upload_file(new_id, result.tobytes(garbage=4, deflate=True))
-    result.close()
-    return {"id": new_id, "name": "merged.pdf"}
+    try:
+        for file_id in file_ids:
+            source = _open(file_id)
+            try:
+                result.insert_pdf(source)
+                if len(result) > 500:
+                    raise ValueError("La fusion est limitée à 500 pages")
+            finally:
+                source.close()
+        if len(result) == 0:
+            raise ValueError("Les documents à combiner sont vides")
+        content = result.tobytes(garbage=4, deflate=True)
+        new_id = str(uuid.uuid4())
+        upload_file(new_id, content)
+        return {"id": new_id, "name": "fusion.pdf", "size": len(content), "pages": len(result)}
+    finally:
+        result.close()
 
 
 # ─── Division ─────────────────────────────────────────────────────────────────
 
-def split_pdf(file_id: str, page_ranges: list[list[int]]) -> list[dict]:
+def split_pdf(file_id: str, page_ranges: list[list[int]], name_prefix: str = "document") -> list[dict]:
     from services.r2_storage import upload_file
-    src_doc = _open(file_id)
+    source = _open(file_id)
     results = []
-    for i, (start, end) in enumerate(page_ranges):
-        part = fitz.open()
-        part.insert_pdf(src_doc, from_page=start, to_page=end)
-        new_id = str(uuid.uuid4())
-        upload_file(new_id, part.tobytes(garbage=4, deflate=True))
-        part.close()
-        results.append({"id": new_id, "name": f"part_{i + 1}.pdf"})
-    src_doc.close()
-    return results
+    try:
+        for start, end in page_ranges:
+            if start < 0 or end < start or end >= len(source):
+                raise ValueError(f"Plage {start + 1}–{end + 1} invalide pour un document de {len(source)} pages")
+        for index, (start, end) in enumerate(page_ranges):
+            part = fitz.open()
+            try:
+                part.insert_pdf(source, from_page=start, to_page=end)
+                content = part.tobytes(garbage=4, deflate=True)
+                new_id = str(uuid.uuid4())
+                upload_file(new_id, content)
+                results.append({
+                    "id": new_id,
+                    "name": f"{name_prefix}-partie-{index + 1}.pdf"[:255],
+                    "size": len(content),
+                    "pages": len(part),
+                })
+            finally:
+                part.close()
+        return results
+    finally:
+        source.close()
 
 
 # ─── Compression ─────────────────────────────────────────────────────────────
@@ -189,8 +211,10 @@ def compress_pdf(file_id: str) -> dict:
 # ─── Export images ────────────────────────────────────────────────────────────
 
 def export_images(file_id: str) -> dict:
-    from fastapi.responses import StreamingResponse
     doc = _open(file_id)
+    if len(doc) > 100:
+        doc.close()
+        raise ValueError("L'export d'images est limité à 100 pages")
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for i, page in enumerate(doc):
@@ -209,6 +233,9 @@ def apply_ocr(file_id: str) -> None:
     import pytesseract
     from services.r2_storage import upload_file
     doc = _open(file_id)
+    if len(doc) > 30:
+        doc.close()
+        raise ValueError("L'OCR est limité à 30 pages dans la version MVP")
     out = fitz.open()
     for page in doc:
         pix = page.get_pixmap(dpi=200)

@@ -31,7 +31,7 @@ function formatSize(bytes) {
   return `${(bytes/1024/1024).toFixed(1)} MB`
 }
 
-export default function FileList({ files, activeId, onSelect, onRefresh, onUpload, loading }) {
+export default function FileList({ files, activeId, onSelect, onRefresh, onDeleted, onUpload, loading }) {
   const [pendingDelete, setPendingDelete] = useState(null)
 
   const handleShare = async (e, f) => {
@@ -48,7 +48,8 @@ export default function FileList({ files, activeId, onSelect, onRefresh, onUploa
     try {
       await deleteFile(pendingDelete.id)
       toast.success(`"${pendingDelete.name}" supprimé`)
-      onRefresh()
+      onDeleted?.(pendingDelete)
+      await onRefresh()
     } catch { toast.error('Erreur suppression') }
     finally { setPendingDelete(null) }
   }

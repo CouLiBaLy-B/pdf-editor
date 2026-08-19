@@ -103,6 +103,16 @@ Le déploiement se fait automatiquement à chaque push sur `main`.
 
 Documentation interactive : **http://localhost:8000/docs**
 
+## Limites du MVP
+
+- PDF importé : **50 Mo et 300 pages maximum**
+- Fusion : **20 fichiers et 500 pages maximum**
+- OCR : **30 pages maximum par opération**
+- Export PNG : **100 pages maximum**
+- Image insérée : **10 Mo maximum**
+
+La feuille de route d'exploitation est détaillée dans [`PLAN_MVP_VERS_PRODUCTION.md`](./PLAN_MVP_VERS_PRODUCTION.md).
+
 ## Tests
 
 ```bash

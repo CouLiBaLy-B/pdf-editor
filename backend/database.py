@@ -36,6 +36,7 @@ class PDFFile(Base):
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     last_accessed_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     owner = relationship("User", back_populates="files")
+    share_links = relationship("ShareLink", back_populates="file", cascade="all, delete-orphan")
 
 
 class ShareLink(Base):
@@ -46,6 +47,7 @@ class ShareLink(Base):
     token = Column(String, unique=True, nullable=False)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     owner = relationship("User", back_populates="share_links")
+    file = relationship("PDFFile", back_populates="share_links")
 
 
 class Transaction(Base):
@@ -55,7 +57,7 @@ class Transaction(Base):
     file_id = Column(String, nullable=True)
     type = Column(String, nullable=False)  # "topup" | "operation"
     credits_delta = Column(Integer, nullable=False)
-    stripe_session_id = Column(String, nullable=True)
+    stripe_session_id = Column(String, nullable=True, unique=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     user = relationship("User", back_populates="transactions")
 

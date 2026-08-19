@@ -2,10 +2,12 @@ import re
 import uuid
 from pathlib import Path
 from datetime import datetime, timezone
+from urllib.parse import quote
 
 from fastapi import APIRouter, UploadFile, File, HTTPException, Depends
-from fastapi.responses import RedirectResponse, Response
+from fastapi.responses import Response
 from sqlalchemy.orm import Session
+import fitz
 
 from database import PDFFile, get_db
 from auth import get_current_user
@@ -17,6 +19,7 @@ router = APIRouter()
 MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
 PDF_MAGIC_BYTES = b'%PDF'
 PDF_EOF_MARKER = b'%%EOF'
+MAX_PAGES = 300
 
 
 def sanitize_filename(filename: str) -> str:
@@ -81,6 +84,20 @@ def validate_pdf_content(content: bytes) -> None:
             detail="Le fichier PDF semble incomplet ou corrompu"
         )
 
+    try:
+        document = fitz.open(stream=content, filetype="pdf")
+        if document.needs_pass:
+            raise HTTPException(status_code=400, detail="Les PDF protégés par mot de passe ne sont pas pris en charge")
+        if len(document) == 0:
+            raise HTTPException(status_code=400, detail="Le PDF ne contient aucune page")
+        if len(document) > MAX_PAGES:
+            raise HTTPException(status_code=400, detail=f"Le PDF dépasse la limite de {MAX_PAGES} pages")
+        document.close()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="Le fichier PDF est corrompu ou non pris en charge") from exc
+
 
 @router.post("/upload")
 async def upload_pdf(
@@ -95,15 +112,19 @@ async def upload_pdf(
             detail="Seuls les fichiers PDF sont acceptés"
         )
     
-    # Read content
-    content = await file.read()
-    
-    # Validate size
-    if len(content) > MAX_FILE_SIZE:
-        raise HTTPException(
-            status_code=413,
-            detail=f"Fichier trop volumineux. Maximum: {MAX_FILE_SIZE // (1024 * 1024)} MB"
-        )
+    # Lire par blocs afin de couper la requête avant qu'un fichier malveillant
+    # ne monopolise la mémoire du processus.
+    chunks = []
+    total_size = 0
+    while chunk := await file.read(1024 * 1024):
+        total_size += len(chunk)
+        if total_size > MAX_FILE_SIZE:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Fichier trop volumineux. Maximum: {MAX_FILE_SIZE // (1024 * 1024)} MB"
+            )
+        chunks.append(chunk)
+    content = b"".join(chunks)
     
     # Validate PDF magic bytes and structure
     try:
@@ -172,18 +193,21 @@ def download_file(
     f.last_accessed_at = datetime.now(timezone.utc)
     db.commit()
     
-    url = r2_storage.get_presigned_url(file_id)
-    
-    # In local development, return content directly
-    if url.startswith("/uploads/"):
+    # Le backend relaie le contenu pour garder l'autorisation, le CSP et CORS
+    # identiques avec le stockage local et R2.
+    try:
         content = r2_storage.download_file(file_id)
-        return Response(
-            content=content,
-            media_type="application/pdf",
-            headers={"Content-Disposition": f'attachment; filename="{f.name}"'}
-        )
-    
-    return RedirectResponse(url=url)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="PDF introuvable") from exc
+    safe_name = quote(f.name)
+    return Response(
+        content=content,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f"attachment; filename*=UTF-8''{safe_name}",
+            "Cache-Control": "private, no-store",
+        },
+    )
 
 
 @router.delete("/{file_id}")

@@ -41,7 +41,7 @@ export default function AuthPage() {
             {mode === 'login' ? 'Bon retour 👋' : 'Créer un compte'}
           </h1>
           <p className="text-xs text-ink-muted mb-6">
-            {mode === 'login' ? 'Connectez-vous pour accéder à vos documents' : '5 crédits offerts à l\'inscription'}
+            {mode === 'login' ? 'Connectez-vous pour accéder à vos documents' : '10 crédits offerts à l\'inscription'}
           </p>
 
           <form onSubmit={submit} className="flex flex-col gap-4">

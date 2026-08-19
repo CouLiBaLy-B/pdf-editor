@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { useDropzone } from 'react-dropzone'
-import { listFiles, uploadFile, compressPdf, exportImages, applyOcr, fetchPdfBlob } from '../services/api'
+import { listFiles, uploadFile, compressPdf, exportImages, applyOcr, fetchPdfBlob, getMe } from '../services/api'
 import { toast } from 'sonner'
 import { PanelLeftClose, PanelLeftOpen, UploadCloud } from 'lucide-react'
 
@@ -17,8 +17,10 @@ import { AppLogo, Button } from '../components/ui/index.js'
 import UserMenu from '../components/UserMenu'
 import PaywallModal from '../components/PaywallModal'
 import OnboardingTooltip from '../components/OnboardingTooltip'
+import { useAuth } from '../context/AuthContext'
 
 export default function EditorPage() {
+  const { setUser } = useAuth()
   const [files, setFiles] = useState([])
   const [filesLoading, setFilesLoading] = useState(true)
   const [activeFile, setActiveFile] = useState(null)
@@ -46,13 +48,21 @@ export default function EditorPage() {
   }, [])
 
   const refresh = useCallback(async () => {
-    const data = await listFiles()
-    setFiles(data)
-    setFilesLoading(false)
-  }, [])
+    try {
+      const [data, profile] = await Promise.all([listFiles(), getMe()])
+      setFiles(data)
+      setUser(profile)
+      return data
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'Impossible de charger vos documents')
+      throw error
+    } finally {
+      setFilesLoading(false)
+    }
+  }, [setUser])
 
   useEffect(() => {
-    refresh()
+    refresh().catch(() => {})
   }, [refresh])
 
   // Listen for paywall events
@@ -74,6 +84,19 @@ export default function EditorPage() {
     if (pdfUrlRef.current) URL.revokeObjectURL(pdfUrlRef.current)
   }, [])
 
+  const handleDeletedFile = (file) => {
+    if (file.id !== activeFile?.id) return
+    if (pdfUrlRef.current) URL.revokeObjectURL(pdfUrlRef.current)
+    pdfUrlRef.current = null
+    setPdfUrl(null)
+    setActiveFile(null)
+    setTotalPages(0)
+    setCanvasSize(null)
+    setTextItems([])
+    setTextViewport(null)
+    setActiveTool('select')
+  }
+
   const handleSelectFile = (f) => {
     setActiveFile(f)
     setCurrentPage(1)
@@ -89,24 +112,29 @@ export default function EditorPage() {
     if (activeFile) {
       setTextItems([])
       setTextViewport(null)
-      const updated = await listFiles()
-      setFiles(updated)
+      const updated = await refresh()
       const f = updated.find(x => x.id === activeFile.id)
       if (f) {
         setActiveFile(f)
         await loadPdf(f)
       }
     }
-  }, [activeFile, loadPdf])
+  }, [activeFile, loadPdf, refresh])
 
-  const onDrop = useCallback(async (acceptedFiles) => {
+  const onDrop = useCallback(async (acceptedFiles, rejectedFiles = []) => {
+    if (rejectedFiles.length) toast.error('Seuls les fichiers PDF sont acceptés')
+    let imported = 0
     for (const file of acceptedFiles) {
       try {
         await uploadFile(file)
-        await refresh()
-      } catch (err) {
-        if (err.response?.status === 402) setPaywallMsg(err.response?.data?.detail)
+        imported += 1
+      } catch (error) {
+        toast.error(`${file.name} : ${error.response?.data?.detail || 'import impossible'}`)
       }
+    }
+    if (imported) {
+      await refresh()
+      toast.success(`${imported} document${imported > 1 ? 's' : ''} importé${imported > 1 ? 's' : ''}`)
     }
   }, [refresh])
 
@@ -241,6 +269,7 @@ export default function EditorPage() {
             activeId={activeFile?.id}
             onSelect={handleSelectFile}
             onRefresh={refresh}
+            onDeleted={handleDeletedFile}
             onUpload={open}
             loading={filesLoading}
           />
@@ -318,10 +347,10 @@ export default function EditorPage() {
             <MetadataPanel fileId={activeFile.id} onSaved={handleSaved} onClose={() => setActiveTool('select')} />
           )}
           {showMergePanel && (
-            <MergeSplitPanel mode="merge" file={activeFile} allFiles={files} onRefresh={refresh} />
+            <MergeSplitPanel mode="merge" file={activeFile} allFiles={files} totalPages={totalPages} onRefresh={refresh} onClose={() => setActiveTool('select')} />
           )}
           {showSplitPanel && (
-            <MergeSplitPanel mode="split" file={activeFile} allFiles={files} onRefresh={refresh} />
+            <MergeSplitPanel mode="split" file={activeFile} allFiles={files} totalPages={totalPages} onRefresh={refresh} onClose={() => setActiveTool('select')} />
           )}
           {showPagesPanel && (
             <PagesPanel
