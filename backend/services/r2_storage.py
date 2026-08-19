@@ -54,6 +54,20 @@ def get_presigned_url(file_id: str, expires: int = 3600) -> str:
     )
 
 
+def check_storage() -> None:
+    """Vérifie l'accès au stockage au démarrage et dans les probes de disponibilité."""
+    if _USE_LOCAL:
+        from services.storage import UPLOAD_DIR
+        UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+        probe = UPLOAD_DIR / ".write-probe"
+        probe.write_bytes(b"ok")
+        probe.unlink(missing_ok=True)
+        return
+    probe_key = "health/startup-probe"
+    _s3.put_object(Bucket=_BUCKET, Key=probe_key, Body=b"ok", ContentType="text/plain")
+    _s3.delete_object(Bucket=_BUCKET, Key=probe_key)
+
+
 def delete_file(file_id: str) -> None:
     if _USE_LOCAL:
         import shutil

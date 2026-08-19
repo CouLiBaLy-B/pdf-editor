@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from auth import consume_credit, require_available_credit
 from database import get_db
-from routers.editing_utils import owned_file, pdf_error
+from routers.editing_utils import lock_owned_file, pdf_error
 from services import pdf_service
 
 router = APIRouter()
@@ -24,7 +24,7 @@ class SignRequest(BaseModel):
 
 @router.post("/{file_id}/sign")
 def sign(file_id: str, body: SignRequest, db: Session = Depends(get_db), user=Depends(require_available_credit)):
-    owned_file(db, user, file_id)
+    lock_owned_file(db, user, file_id)
     if body.x1 <= body.x0 or body.y1 <= body.y0:
         raise HTTPException(status_code=400, detail="Zone de signature invalide")
     try:

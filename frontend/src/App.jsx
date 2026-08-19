@@ -9,6 +9,7 @@ const ResetPasswordPage = lazy(() => import('./pages/ResetPasswordPage'))
 const SettingsPage = lazy(() => import('./pages/SettingsPage'))
 const SharedFilePage = lazy(() => import('./pages/SharedFilePage'))
 const DashboardPage = lazy(() => import('./pages/DashboardPage'))
+const LegalPage = lazy(() => import('./pages/LegalPage'))
 
 function AppLoading() {
   return (
@@ -38,6 +39,9 @@ export default function App() {
             <Route path="/forgot-password" element={<ResetPasswordPage />} />
             <Route path="/reset-password" element={<ResetPasswordPage />} />
             <Route path="/shared/:token" element={<SharedFilePage />} />
+            <Route path="/legal" element={<LegalPage />} />
+            <Route path="/privacy" element={<LegalPage />} />
+            <Route path="/terms" element={<LegalPage />} />
             <Route path="/app" element={<PrivateRoute><EditorPage /></PrivateRoute>} />
             <Route path="/settings" element={<PrivateRoute><SettingsPage /></PrivateRoute>} />
             <Route path="/dashboard" element={<PrivateRoute><DashboardPage /></PrivateRoute>} />

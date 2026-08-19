@@ -22,6 +22,8 @@ class User(Base):
     is_admin = Column(Integer, default=0, nullable=False)  # 1 = admin
     stripe_customer_id = Column(String, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    terms_accepted_at = Column(DateTime, nullable=True)
+    token_version = Column(Integer, default=0, nullable=False)
     files = relationship("PDFFile", back_populates="owner", cascade="all, delete-orphan")
     share_links = relationship("ShareLink", back_populates="owner", cascade="all, delete-orphan")
     transactions = relationship("Transaction", back_populates="user", cascade="all, delete-orphan")

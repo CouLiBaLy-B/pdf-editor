@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 
 from auth import consume_credit, require_available_credit
 from database import get_db
-from routers.editing_utils import owned_file, pdf_error
+from routers.editing_utils import lock_owned_file, pdf_error
 from services import pdf_service
 
 router = APIRouter()
@@ -38,7 +38,7 @@ def _validate_degrees(degrees: int):
 
 
 def _paid(file_id, user, db, operation, response):
-    owned_file(db, user, file_id)
+    lock_owned_file(db, user, file_id)
     try:
         result = operation()
     except Exception as exc:

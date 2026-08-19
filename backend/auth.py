@@ -1,3 +1,4 @@
+import logging
 import os
 import secrets
 import uuid
@@ -38,6 +39,7 @@ SECRET_KEY = _get_secret_key()
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 7 days
 
+logger = logging.getLogger("pdfpro")
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 
@@ -50,9 +52,14 @@ def verify_password(plain: str, hashed: str) -> bool:
     return pwd_context.verify(plain, hashed)
 
 
-def create_access_token(user_id: str) -> str:
-    expire = datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    return jwt.encode({"sub": user_id, "exp": expire}, SECRET_KEY, algorithm=ALGORITHM)
+def create_access_token(user_id: str, token_version: int = 0) -> str:
+    now = datetime.now(timezone.utc)
+    expire = now + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    return jwt.encode(
+        {"sub": user_id, "ver": token_version, "iat": now, "exp": expire},
+        SECRET_KEY,
+        algorithm=ALGORITHM,
+    )
 
 
 def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)) -> User:
@@ -70,7 +77,7 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
         raise credentials_exc
 
     user = db.query(User).filter(User.id == user_id).first()
-    if not user:
+    if not user or payload.get("ver", -1) != user.token_version:
         raise credentials_exc
     return user
 
@@ -104,9 +111,12 @@ def consume_credit(db: Session, user: User, file_id: str | None = None) -> None:
     ))
     db.commit()
     db.refresh(user)
-    if user.credits <= 2:
-        from services.email import send_low_credits_email
-        send_low_credits_email(user.email, user.credits)
+    if user.credits == 2:
+        try:
+            from services.email import send_low_credits_email
+            send_low_credits_email(user.email, user.credits)
+        except Exception:
+            logger.exception("Low-credit email failed for user %s", user.id)
 
 
 def require_credit(user: User = Depends(require_available_credit), db: Session = Depends(get_db)) -> User:

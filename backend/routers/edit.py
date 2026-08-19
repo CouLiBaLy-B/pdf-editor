@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from auth import consume_credit, get_current_user, require_available_credit
 from database import PDFFile, get_db
-from routers.editing_utils import owned_file, pdf_error
+from routers.editing_utils import lock_owned_file, owned_file, pdf_error
 from services import pdf_service
 
 router = APIRouter()
@@ -53,7 +53,7 @@ class MetadataRequest(BaseModel):
 
 
 def _run_paid(file_id: str, user, db: Session, operation, message: str):
-    owned_file(db, user, file_id)
+    lock_owned_file(db, user, file_id)
     try:
         operation()
     except Exception as exc:
@@ -108,7 +108,7 @@ def update_metadata(file_id: str, body: MetadataRequest, db: Session = Depends(g
 
 @router.post("/{file_id}/compress")
 def compress(file_id: str, db: Session = Depends(get_db), user=Depends(require_available_credit)):
-    owned_file(db, user, file_id)
+    lock_owned_file(db, user, file_id)
     try:
         result = pdf_service.compress_pdf(file_id)
     except Exception as exc:

@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 
 from auth import consume_credit, require_available_credit
 from database import get_db
-from routers.editing_utils import owned_file, pdf_error
+from routers.editing_utils import lock_owned_file, pdf_error
 from services import pdf_service
 
 router = APIRouter()
@@ -18,7 +18,7 @@ class HighlightRequest(BaseModel):
 
 @router.post("/{file_id}/highlight")
 def highlight(file_id: str, body: HighlightRequest, db: Session = Depends(get_db), user=Depends(require_available_credit)):
-    owned_file(db, user, file_id)
+    lock_owned_file(db, user, file_id)
     if any(len(rect) != 4 for rect in body.quads):
         raise HTTPException(status_code=400, detail="Coordonnées de surlignage invalides")
     try:

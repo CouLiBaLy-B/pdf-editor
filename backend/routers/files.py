@@ -141,24 +141,27 @@ async def upload_pdf(
     file_id = str(uuid.uuid4())
     safe_name = sanitize_filename(file.filename)
     
-    # Upload to storage
+    # Stockage et enregistrement compensés : aucun objet orphelin si la base échoue.
     r2_storage.upload_file(file_id, content)
-    
-    # Create database record
-    db_file = PDFFile(
-        id=file_id,
-        name=safe_name,
-        size_bytes=len(content),
-        user_id=user.id,
-    )
-    db.add(db_file)
-    db.commit()
+    try:
+        db_file = PDFFile(
+            id=file_id,
+            name=safe_name,
+            size_bytes=len(content),
+            user_id=user.id,
+        )
+        db.add(db_file)
+        db.commit()
+    except Exception:
+        db.rollback()
+        r2_storage.delete_file(file_id)
+        raise
     
     return {
         "id": file_id,
         "name": safe_name,
         "size": len(content),
-        "url": r2_storage.get_presigned_url(file_id)
+        "url": f"/api/files/{file_id}/download"
     }
 
 
@@ -168,7 +171,7 @@ def list_files(db: Session = Depends(get_db), user=Depends(get_current_user)):
         {
             "id": f.id,
             "name": f.name,
-            "url": r2_storage.get_presigned_url(f.id),
+            "url": f"/api/files/{f.id}/download",
             "size": f.size_bytes
         }
         for f in user.files

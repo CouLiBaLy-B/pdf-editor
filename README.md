@@ -78,6 +78,7 @@ Le déploiement se fait automatiquement à chaque push sur `main`.
 | `POST` | `/api/auth/register` | Inscription |
 | `POST` | `/api/auth/login` | Connexion |
 | `GET` | `/api/auth/me` | Profil + solde crédits |
+| `GET` | `/api/auth/export` | Exporter les données du compte |
 | `GET` | `/api/files/` | Lister les fichiers |
 | `POST` | `/api/files/upload` | Uploader un PDF |
 | `GET` | `/api/files/{id}/download` | Télécharger |
@@ -100,6 +101,9 @@ Le déploiement se fait automatiquement à chaque push sur `main`.
 | `GET` | `/api/billing/balance` | Solde de crédits |
 | `GET` | `/api/billing/history` | Historique transactions |
 | `POST` | `/api/billing/webhook` | Webhook Stripe |
+| `POST` | `/api/files/{id}/share` | Créer un lien de partage 7 jours |
+| `DELETE` | `/api/files/{id}/share` | Révoquer les liens de partage |
+| `GET` | `/health/ready` | Disponibilité base + stockage |
 
 Documentation interactive : **http://localhost:8000/docs**
 
@@ -111,7 +115,7 @@ Documentation interactive : **http://localhost:8000/docs**
 - Export PNG : **100 pages maximum**
 - Image insérée : **10 Mo maximum**
 
-La feuille de route d'exploitation est détaillée dans [`PLAN_MVP_VERS_PRODUCTION.md`](./PLAN_MVP_VERS_PRODUCTION.md).
+La feuille de route est détaillée dans [`PLAN_MVP_VERS_PRODUCTION.md`](./PLAN_MVP_VERS_PRODUCTION.md) et les procédures d'exploitation dans [`RUNBOOK_PRODUCTION.md`](./RUNBOOK_PRODUCTION.md).
 
 ## Tests
 

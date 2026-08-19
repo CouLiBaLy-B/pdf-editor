@@ -1,3 +1,5 @@
+import json
+import logging
 import os
 import uuid
 import stripe
@@ -9,6 +11,7 @@ from database import User, Transaction, get_db
 from auth import get_current_user
 from services.email import send_receipt_email, send_low_credits_email
 
+logger = logging.getLogger("pdfpro")
 stripe.api_key = os.getenv("STRIPE_SECRET_KEY", "")
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "")
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
@@ -116,7 +119,9 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
         credits, price_cents, _ = pack_config
         user = db.query(User).filter(User.id == user_id).first()
         if user:
-            user.credits += credits
+            db.query(User).filter(User.id == user_id).update(
+                {User.credits: User.credits + credits}, synchronize_session=False
+            )
             tx = Transaction(
                 id=str(uuid.uuid4()),
                 user_id=user.id,
@@ -126,6 +131,11 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
             )
             db.add(tx)
             db.commit()
-            send_receipt_email(user.email, credits, price_cents / 100)
+            try:
+                send_receipt_email(user.email, credits, price_cents / 100)
+            except Exception:
+                logger.exception(json.dumps({
+                    "level": "error", "event": "receipt_email_failed", "stripe_session_id": session_id,
+                }))
 
     return {"received": True}

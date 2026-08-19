@@ -9,6 +9,7 @@ export default function AuthPage() {
   const [mode, setMode] = useState('login')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [acceptedTerms, setAcceptedTerms] = useState(false)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const { signin } = useAuth()
@@ -18,8 +19,9 @@ export default function AuthPage() {
     e.preventDefault()
     setError(''); setLoading(true)
     try {
-      const fn = mode === 'login' ? login : register
-      const { access_token } = await fn(email, password)
+      const { access_token } = mode === 'login'
+        ? await login(email, password)
+        : await register(email, password, acceptedTerms)
       localStorage.setItem('token', access_token)
       const userData = await getMe()
       signin(access_token, userData)
@@ -69,6 +71,19 @@ export default function AuthPage() {
                   Mot de passe oublié ?
                 </button>
               </div>
+            )}
+
+            {mode === 'register' && (
+              <label className="flex items-start gap-2 text-[11px] leading-relaxed text-ink-muted">
+                <input
+                  type="checkbox"
+                  required
+                  checked={acceptedTerms}
+                  onChange={event => setAcceptedTerms(event.target.checked)}
+                  className="mt-0.5 accent-emerald-600"
+                />
+                <span>J’accepte les <a href="/terms" target="_blank" className="font-medium text-brand hover:underline">CGU</a> et la <a href="/privacy" target="_blank" className="font-medium text-brand hover:underline">politique de confidentialité</a>.</span>
+              </label>
             )}
 
             {error && (

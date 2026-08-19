@@ -19,7 +19,7 @@ def send_welcome_email(to_email: str):
     _send(to_email, "Bienvenue sur PDFPro 🎉", f"""
     <div style="{_BASE_STYLE}">
       <h2 style="color:#4f46e5">Bienvenue sur PDFPro !</h2>
-      <p>Votre compte est prêt. Commencez par acheter des crédits pour éditer, signer et fusionner vos PDFs.</p>
+      <p>Votre compte est prêt avec 10 crédits offerts. Vous pouvez dès maintenant éditer, signer et fusionner vos PDFs.</p>
       <p><a href="{FRONTEND_URL}/dashboard" style="{_BTN_STYLE}">Accéder à mon compte →</a></p>
       <p style="color:#888;font-size:12px">1 crédit = 1 opération = 0,25€</p>
     </div>""")

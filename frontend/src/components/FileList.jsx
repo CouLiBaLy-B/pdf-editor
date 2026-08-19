@@ -1,7 +1,7 @@
 import React, { useState } from 'react'
-import { Download, Trash2, FileText, Share2, UploadCloud } from 'lucide-react'
+import { Download, Trash2, FileText, Share2, Unlink, UploadCloud } from 'lucide-react'
 import { toast } from 'sonner'
-import { downloadFile, deleteFile, shareFile } from '../services/api'
+import { downloadFile, deleteFile, revokeShare, shareFile } from '../services/api'
 import { ConfirmDialog } from './ui/index.js'
 
 function Skeleton() {
@@ -41,6 +41,16 @@ export default function FileList({ files, activeId, onSelect, onRefresh, onDelet
       await navigator.clipboard.writeText(window.location.origin + share_url)
       toast.success('Lien copié !')
     } catch { toast.error('Erreur partage') }
+  }
+
+  const handleRevokeShare = async (event, file) => {
+    event.stopPropagation()
+    try {
+      const { revoked } = await revokeShare(file.id)
+      toast.success(revoked ? `${revoked} lien(s) révoqué(s)` : 'Aucun lien actif')
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'Révocation impossible')
+    }
   }
 
   const handleDeleteConfirm = async () => {
@@ -126,6 +136,9 @@ export default function FileList({ files, activeId, onSelect, onRefresh, onDelet
                 <button onClick={e => handleShare(e, f)}
                   className="p-1 rounded-md text-ink-muted hover:text-brand hover:bg-brand-light transition-colors"
                   title="Partager"><Share2 size={11} /></button>
+                <button onClick={e => handleRevokeShare(e, f)}
+                  className="p-1 rounded-md text-ink-muted hover:text-amber-600 hover:bg-amber-50 transition-colors"
+                  title="Révoquer les liens"><Unlink size={11} /></button>
                 <button onClick={e => { e.stopPropagation(); setPendingDelete(f) }}
                   className="p-1 rounded-md text-ink-muted hover:text-danger hover:bg-red-50 transition-colors"
                   title="Supprimer"><Trash2 size={11} /></button>

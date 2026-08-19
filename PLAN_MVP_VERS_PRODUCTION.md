@@ -29,7 +29,7 @@ Le MVP est considéré comme **fonctionnellement complet** lorsque ce parcours f
 | Crédits / Stripe | ✅ MVP | Webhook idempotent et configuration absente signalée proprement |
 | Robustesse UI | ✅ | État de chargement, notifications et écran d'erreur global |
 | Tests automatisés | 🟡 | Tests backend critiques et build frontend ; E2E à ajouter |
-| Exploitation production | 🟡 | Monitoring partiel ; sauvegardes, alertes et runbooks à finaliser |
+| Exploitation production | 🟡 | Probes, logs structurés, garde-fous et runbook livrés ; sauvegardes/alertes à activer chez l'hébergeur |
 
 ## 2. Critères de sortie MVP (staging)
 
@@ -42,7 +42,7 @@ Tous les critères suivants doivent être validés avant une ouverture à des ut
 - [ ] PostgreSQL migré jusqu'à la dernière révision Alembic ;
 - [ ] aucune variable avec une valeur d'exemple ou un secret par défaut ;
 - [ ] politiques de sauvegarde PostgreSQL et restauration testée ;
-- [ ] pages légales minimales : CGU, confidentialité, cookies et mentions légales ;
+- [x] pages légales minimales intégrées ; identité de l'éditeur à configurer et contenu à valider ;
 - [ ] support : adresse de contact et procédure de remboursement définies ;
 - [ ] test sur Chrome, Firefox, Safari et mobile pour les parcours principaux.
 
