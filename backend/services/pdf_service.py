@@ -63,31 +63,133 @@ def add_text(file_id, page_number, x, y, text, font_size=12, color=(0, 0, 0)):
 
 
 # ─── Remplacement de texte ────────────────────────────────────────────────────
+# Bande verticale autour du corps des glyphes (hauteur d'œil / capitales).
+# Un rectangle trop haut (ex. 1.05em au-dessus de la ligne de base) recouvre
+# les descendantes (j, q, g, p, y) de la ligne supérieure ; trop bas, les
+# hampes de la ligne inférieure. La rédaction n'a besoin que d'intersecter
+# les glyphes cibles pour les supprimer entièrement.
+_LINE_BODY_ASCENDER = 0.78
+_LINE_BODY_DESCENDER = 0.10
+
+
+def _pdfjs_to_pymupdf_y(page: fitz.Page, y_pdf_baseline: float) -> float:
+    """PDF.js fournit une origine basse ; PyMuPDF une origine haute."""
+    return page.rect.height - y_pdf_baseline
+
+
+def _page_text_lines(page: fitz.Page) -> list[dict]:
+    lines = []
+    for block in page.get_text("dict").get("blocks", []):
+        if block.get("type", 0) != 0:
+            continue
+        for line in block.get("lines", []):
+            spans = line.get("spans") or []
+            if not spans:
+                continue
+            origin = spans[0].get("origin")
+            if not origin:
+                continue
+            lines.append({
+                "bbox": fitz.Rect(line["bbox"]),
+                "baseline": float(origin[1]),
+                "spans": spans,
+            })
+    return lines
+
+
+def _same_line(baseline_a: float, baseline_b: float, font_size: float) -> bool:
+    return abs(baseline_a - baseline_b) <= max(2.0, font_size * 0.4)
+
+
+def _clip_band_against_neighbors(band: fitz.Rect, baseline_y: float, font_size: float, lines: list[dict]) -> fitz.Rect:
+    """Rétrécit la bande pour ne pas recouvrir les glyphes des lignes voisines."""
+    y0, y1 = band.y0, band.y1
+    for line in lines:
+        if _same_line(line["baseline"], baseline_y, font_size):
+            continue
+        other = line["bbox"]
+        if other.x1 < band.x0 or other.x0 > band.x1:
+            continue
+        if line["baseline"] < baseline_y:
+            y0 = max(y0, other.y1)
+        else:
+            y1 = min(y1, other.y0)
+    if y1 - y0 < font_size * 0.12:
+        # Interligne trop serré : fine tranche dans le corps, sans fond blanc.
+        mid = baseline_y - font_size * 0.35
+        half = max(0.6, font_size * 0.08)
+        return fitz.Rect(band.x0, mid - half, band.x1, mid + half)
+    return fitz.Rect(band.x0, y0, band.x1, y1)
+
+
+def _body_band(x0: float, x1: float, baseline_y: float, font_size: float) -> fitz.Rect:
+    return fitz.Rect(
+        x0,
+        baseline_y - font_size * _LINE_BODY_ASCENDER,
+        x1,
+        baseline_y + font_size * _LINE_BODY_DESCENDER,
+    )
+
+
+def _redaction_rects(page: fitz.Page, x_pdf: float, baseline_y: float, width_pdf: float, font_size: float) -> list[tuple[fitz.Rect, bool]]:
+    """Rectangles de rédaction (rect, with_fill) limités au corps de la ligne éditée."""
+    lines = _page_text_lines(page)
+    pad_x0, pad_x1 = x_pdf - 0.6, x_pdf + width_pdf + 1.2
+    hits: list[tuple[dict, dict, fitz.Rect]] = []
+    for line in lines:
+        if not _same_line(line["baseline"], baseline_y, font_size):
+            continue
+        for span in line["spans"]:
+            box = fitz.Rect(span["bbox"])
+            if box.x1 >= pad_x0 and box.x0 <= pad_x1:
+                hits.append((line, span, box))
+
+    rects: list[tuple[fitz.Rect, bool]] = []
+    if hits:
+        for _line, span, box in hits:
+            size = float(span.get("size") or font_size)
+            origin_y = float((span.get("origin") or (0, baseline_y))[1])
+            band = _body_band(box.x0 - 0.3, box.x1 + 0.3, origin_y, size)
+            clipped = _clip_band_against_neighbors(band, origin_y, size, lines)
+            use_fill = clipped.height >= size * 0.12
+            rects.append((clipped & page.rect, use_fill))
+    else:
+        band = _body_band(
+            max(page.rect.x0, x_pdf - 1),
+            min(page.rect.x1, x_pdf + width_pdf + 3),
+            baseline_y,
+            font_size,
+        )
+        clipped = _clip_band_against_neighbors(band, baseline_y, font_size, lines)
+        use_fill = clipped.height >= font_size * 0.12
+        rects.append((clipped & page.rect, use_fill))
+    return [(rect, fill) for rect, fill in rects if not rect.is_empty]
+
 
 def replace_text(file_id, page_number, x_pdf, y_pdf_baseline, width_pdf, new_text, font_size=12, color=(0, 0, 0)):
     doc = _open(file_id)
     try:
         page = _page(doc, page_number)
-        baseline_y = page.rect.height - y_pdf_baseline
-        rect = fitz.Rect(
-            max(0, x_pdf - 1), max(0, baseline_y - font_size * 1.05),
-            min(page.rect.width, x_pdf + width_pdf + 3),
-            min(page.rect.height, baseline_y + font_size * 0.35),
-        )
-        if rect.is_empty or not page.rect.intersects(rect):
+        baseline_y = _pdfjs_to_pymupdf_y(page, y_pdf_baseline)
+        redact_rects = _redaction_rects(page, x_pdf, baseline_y, width_pdf, font_size)
+        if not redact_rects:
             raise ValueError("La zone de texte est hors de la page")
 
-        # Une vraie rédaction supprime l'ancien contenu, contrairement à un
-        # rectangle blanc qui le laissait sélectionnable et recherchable.
-        page.add_redact_annot(rect, fill=(1, 1, 1))
-        page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_NONE)
+        # Rédaction réelle (le texte n'est plus sélectionnable) mais sur une
+        # bande trop basse/haute le fond blanc masquait les descendantes
+        # (j, q, g, p, y) ou les hampes des lignes voisines.
+        for rect, use_fill in redact_rects:
+            page.add_redact_annot(rect, fill=(1, 1, 1) if use_fill else None)
+        page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_NONE, graphics=0)
         if new_text:
-            target = fitz.Rect(rect.x0, rect.y0, max(rect.x1, rect.x0 + width_pdf + 20), rect.y1 + font_size * 0.35)
-            result = page.insert_textbox(target, new_text, fontsize=font_size, color=_valid_color(color), align=fitz.TEXT_ALIGN_LEFT)
-            if result < 0:
-                # Les textes plus longs peuvent dépasser la zone d'origine :
-                # on conserve la ligne avec une taille minimale lisible.
-                page.insert_text(fitz.Point(x_pdf, baseline_y), new_text, fontsize=max(4, font_size * 0.9), color=_valid_color(color))
+            # insert_text à la ligne de base évite qu'un textbox trop haut
+            # déborde visuellement sur la ligne suivante.
+            page.insert_text(
+                fitz.Point(x_pdf, baseline_y),
+                new_text,
+                fontsize=font_size,
+                color=_valid_color(color),
+            )
         _save(doc, file_id, clean=True)
     except Exception:
         if not doc.is_closed:

@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from passlib.context import CryptContext
@@ -41,7 +41,9 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 7 days
 
 logger = logging.getLogger("pdfpro")
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
+# auto_error=False : sans en-tête Authorization on retombe sur le cookie de session
+# (nécessaire dans les iframes de prévisualisation où le header n'est pas toujours renvoyé).
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login", auto_error=False)
 
 
 def hash_password(password: str) -> str:
@@ -62,19 +64,51 @@ def create_access_token(user_id: str, token_version: int = 0) -> str:
     )
 
 
-def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)) -> User:
+def attach_auth_cookie(response, request: Request, token: str) -> None:
+    """Pose un cookie HttpOnly en plus du Bearer, pour les previews en iframe."""
+    forwarded = (request.headers.get("x-forwarded-proto") or "").split(",")[0].strip()
+    host = (request.headers.get("x-forwarded-host") or request.headers.get("host") or "").lower()
+    public_https = bool(host) and "localhost" not in host and "127.0.0.1" not in host
+    secure = request.url.scheme == "https" or forwarded == "https" or public_https
+    response.set_cookie(
+        key="access_token",
+        value=token,
+        max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        httponly=True,
+        samesite="none" if secure else "lax",
+        secure=secure,
+        path="/",
+    )
+
+
+def clear_auth_cookie(response) -> None:
+    response.delete_cookie("access_token", path="/")
+
+
+def get_current_user(
+    request: Request,
+    token: Optional[str] = Depends(oauth2_scheme),
+    db: Session = Depends(get_db),
+) -> User:
     credentials_exc = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Token invalide ou expiré",
         headers={"WWW-Authenticate": "Bearer"},
     )
+    raw = token or request.cookies.get("access_token")
+    if not raw:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
     try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        payload = jwt.decode(raw, SECRET_KEY, algorithms=[ALGORITHM])
         user_id: Optional[str] = payload.get("sub")
         if not user_id:
             raise credentials_exc
-    except JWTError:
-        raise credentials_exc
+    except JWTError as exc:
+        raise credentials_exc from exc
 
     user = db.query(User).filter(User.id == user_id).first()
     if not user or payload.get("ver", -1) != user.token_version:

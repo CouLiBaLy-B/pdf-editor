@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { register, login, getMe, storeToken } from '../services/api'
 import { useAuth } from '../context/AuthContext'
@@ -7,13 +7,17 @@ import { Mail, Lock, ArrowRight, Loader2 } from 'lucide-react'
 
 export default function AuthPage() {
   const [mode, setMode] = useState('login')
-  const [email, setEmail] = useState('')
-  const [password, setPassword] = useState('')
+  const [email, setEmail] = useState(import.meta.env.DEV ? 'demo@pdfpro.app' : '')
+  const [password, setPassword] = useState(import.meta.env.DEV ? 'demo1234' : '')
   const [acceptedTerms, setAcceptedTerms] = useState(false)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
-  const { signin } = useAuth()
+  const { user, loading: authLoading, signin } = useAuth()
   const navigate = useNavigate()
+
+  useEffect(() => {
+    if (!authLoading && user) navigate('/app', { replace: true })
+  }, [authLoading, user, navigate])
 
   const submit = async (e) => {
     e.preventDefault()
@@ -22,12 +26,14 @@ export default function AuthPage() {
       const { access_token } = mode === 'login'
         ? await login(email, password)
         : await register(email, password, acceptedTerms)
+      if (!access_token) throw new Error('Réponse de connexion invalide')
       storeToken(access_token)
       const userData = await getMe()
       signin(access_token, userData)
       navigate('/app')
     } catch (err) {
-      setError(err.response?.data?.detail || 'Une erreur est survenue')
+      const detail = err.response?.data?.detail
+      setError(typeof detail === 'string' ? detail : (detail?.[0]?.msg || 'Une erreur est survenue'))
     } finally {
       setLoading(false)
     }

@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status, Request
+from fastapi.responses import JSONResponse
 from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
@@ -14,7 +15,10 @@ from slowapi import Limiter
 from slowapi.util import get_remote_address
 
 from database import PDFFile, ShareLink, Transaction, User, get_db
-from auth import hash_password, verify_password, create_access_token, get_current_user, SECRET_KEY, ALGORITHM
+from auth import (
+    hash_password, verify_password, create_access_token, get_current_user,
+    SECRET_KEY, ALGORITHM, attach_auth_cookie, clear_auth_cookie,
+)
 from services.email import send_reset_email, send_welcome_email
 
 logger = logging.getLogger("pdfpro")
@@ -49,7 +53,7 @@ class PromoteRequest(BaseModel):
 
 
 @router.post("/register", status_code=201)
-@limiter.limit("5/minute")  # 5 registrations per minute max
+@limiter.limit("30/minute")
 def register(request: Request, body: RegisterRequest, db: Session = Depends(get_db)):
     """Register a new user account."""
     if not body.accepted_terms:
@@ -85,16 +89,17 @@ def register(request: Request, body: RegisterRequest, db: Session = Depends(get_
         logger.warning("Welcome email failed for user %s", user.id)
 
     logger.info("User registered: %s", user.id)
-    
-    return {
-        "access_token": create_access_token(user.id, user.token_version),
-        "token_type": "bearer",
-        "credits": user.credits
-    }
+    token = create_access_token(user.id, user.token_version)
+    response = JSONResponse(
+        {"access_token": token, "token_type": "bearer", "credits": user.credits},
+        status_code=201,
+    )
+    attach_auth_cookie(response, request, token)
+    return response
 
 
 @router.post("/login")
-@limiter.limit("10/minute")  # 10 login attempts per minute max
+@limiter.limit("60/minute")
 def login(request: Request, form: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
     """Authenticate user and return JWT token."""
     user = db.query(User).filter(User.email == form.username).first()
@@ -104,12 +109,10 @@ def login(request: Request, form: OAuth2PasswordRequestForm = Depends(), db: Ses
         raise HTTPException(status_code=401, detail="Email ou mot de passe incorrect")
     
     logger.info("User logged in: %s", user.id)
-    
-    return {
-        "access_token": create_access_token(user.id, user.token_version),
-        "token_type": "bearer",
-        "credits": user.credits
-    }
+    token = create_access_token(user.id, user.token_version)
+    response = JSONResponse({"access_token": token, "token_type": "bearer", "credits": user.credits})
+    attach_auth_cookie(response, request, token)
+    return response
 
 
 @router.get("/me")

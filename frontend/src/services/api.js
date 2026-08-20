@@ -1,7 +1,7 @@
 import axios from 'axios'
 
 const BASE = '/api'
-const api = axios.create({ baseURL: BASE })
+const api = axios.create({ baseURL: BASE, withCredentials: true })
 
 // ── Gestion du token ──────────────────────────────────────────────────────────
 // Le token est conservé dans localStorage avec un repli en mémoire (variable de
@@ -18,17 +18,30 @@ try {
 }
 
 export const getStoredToken = () => {
+  if (memoryToken) return memoryToken
   try {
-    return localStorage.getItem('token') || memoryToken
+    return localStorage.getItem('token') || sessionStorage.getItem('token')
   } catch {
-    return memoryToken
+    return null
   }
 }
 
+const applyAuthHeader = (token) => {
+  if (token) api.defaults.headers.common.Authorization = `Bearer ${token}`
+  else delete api.defaults.headers.common.Authorization
+}
+
 export const storeToken = (token) => {
-  memoryToken = token
+  memoryToken = token || null
+  applyAuthHeader(memoryToken)
   try {
-    localStorage.setItem('token', token)
+    if (token) {
+      localStorage.setItem('token', token)
+      sessionStorage.setItem('token', token)
+    } else {
+      localStorage.removeItem('token')
+      sessionStorage.removeItem('token')
+    }
   } catch {
     // Stockage indisponible : le token reste en mémoire pour la session
   }
@@ -36,17 +49,25 @@ export const storeToken = (token) => {
 
 export const clearToken = () => {
   memoryToken = null
+  applyAuthHeader(null)
   try {
     localStorage.removeItem('token')
+    localStorage.removeItem('user')
+    sessionStorage.removeItem('token')
   } catch {
     // Stockage indisponible : rien à nettoyer côté localStorage
   }
 }
 
+applyAuthHeader(getStoredToken())
+
 // Inject token on every request
 api.interceptors.request.use((config) => {
   const token = getStoredToken()
-  if (token) config.headers.Authorization = `Bearer ${token}`
+  if (token) {
+    config.headers = config.headers || {}
+    config.headers.Authorization = `Bearer ${token}`
+  }
   return config
 })
 
@@ -54,16 +75,16 @@ api.interceptors.request.use((config) => {
 api.interceptors.response.use(
   (r) => r,
   (err) => {
-    if (err.response?.status === 401) {
+    const status = err.response?.status
+    const url = String(err.config?.url || '')
+    const isAuthEndpoint = /\/auth\/(login|register|me|forgot-password|reset-password)$/.test(url)
+    if (status === 401 && !isAuthEndpoint) {
       clearToken()
-      try {
-        localStorage.removeItem('user')
-      } catch {
-        // Stockage indisponible
+      if (!window.location.pathname.startsWith('/login')) {
+        window.location.href = '/login'
       }
-      window.location.href = '/login'
     }
-    if (err.response?.status === 402) {
+    if (status === 402) {
       window.dispatchEvent(new CustomEvent('paywall', { detail: err.response.data?.detail }))
     }
     return Promise.reject(err)
@@ -77,10 +98,12 @@ export const register = (email, password, acceptedTerms = false) =>
   api.post('/auth/register', { email, password, accepted_terms: acceptedTerms }).then(r => r.data)
 
 export const login = (email, password) => {
-  const form = new FormData()
+  const form = new URLSearchParams()
   form.append('username', email)
   form.append('password', password)
-  return api.post('/auth/login', form).then(r => r.data)
+  return api.post('/auth/login', form, {
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+  }).then(r => r.data)
 }
 
 export const getMe = () => api.get('/auth/me').then(r => r.data)
