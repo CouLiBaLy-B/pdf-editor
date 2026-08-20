@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect } from 'react'
-import { getMe } from '../services/api'
+import { getMe, getStoredToken, storeToken, clearToken } from '../services/api'
 
 const AuthContext = createContext(null)
 
@@ -8,21 +8,21 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    const token = localStorage.getItem('token')
+    const token = getStoredToken()
     if (!token) { setLoading(false); return }
     getMe()
       .then(setUser)
-      .catch(() => localStorage.removeItem('token'))
+      .catch(() => clearToken())
       .finally(() => setLoading(false))
   }, [])
 
   const signin = (token, userData) => {
-    localStorage.setItem('token', token)
+    storeToken(token)
     setUser(userData)
   }
 
   const signout = () => {
-    localStorage.removeItem('token')
+    clearToken()
     setUser(null)
   }
 

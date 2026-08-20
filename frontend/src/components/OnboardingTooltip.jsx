@@ -11,11 +11,20 @@ export default function OnboardingTooltip() {
   const [visible, setVisible] = useState(false)
 
   useEffect(() => {
-    if (localStorage.getItem('onboarding_done') !== 'true') setVisible(true)
+    try {
+      if (localStorage.getItem('onboarding_done') !== 'true') setVisible(true)
+    } catch {
+      // Stockage indisponible (iframe, navigation privée) : on affiche le guide
+      setVisible(true)
+    }
   }, [])
 
   const dismiss = () => {
-    localStorage.setItem('onboarding_done', 'true')
+    try {
+      localStorage.setItem('onboarding_done', 'true')
+    } catch {
+      // Stockage indisponible : rien à persister
+    }
     setVisible(false)
   }
 
