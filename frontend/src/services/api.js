@@ -3,9 +3,49 @@ import axios from 'axios'
 const BASE = '/api'
 const api = axios.create({ baseURL: BASE })
 
+// ── Gestion du token ──────────────────────────────────────────────────────────
+// Le token est conservé dans localStorage avec un repli en mémoire (variable de
+// module). Certains environnements (iframe de prévisualisation, navigation
+// privée, blocage des cookies tiers) rendent le localStorage indisponible ou
+// font échouer setItem silencieusement : sans ce repli, aucune requête
+// authentifiée ne partirait et l'utilisateur serait renvoyé en boucle sur la
+// page de connexion (401 sur /auth/me).
+let memoryToken = null
+try {
+  memoryToken = localStorage.getItem('token') || null
+} catch {
+  memoryToken = null
+}
+
+export const getStoredToken = () => {
+  try {
+    return localStorage.getItem('token') || memoryToken
+  } catch {
+    return memoryToken
+  }
+}
+
+export const storeToken = (token) => {
+  memoryToken = token
+  try {
+    localStorage.setItem('token', token)
+  } catch {
+    // Stockage indisponible : le token reste en mémoire pour la session
+  }
+}
+
+export const clearToken = () => {
+  memoryToken = null
+  try {
+    localStorage.removeItem('token')
+  } catch {
+    // Stockage indisponible : rien à nettoyer côté localStorage
+  }
+}
+
 // Inject token on every request
 api.interceptors.request.use((config) => {
-  const token = localStorage.getItem('token')
+  const token = getStoredToken()
   if (token) config.headers.Authorization = `Bearer ${token}`
   return config
 })
@@ -15,8 +55,12 @@ api.interceptors.response.use(
   (r) => r,
   (err) => {
     if (err.response?.status === 401) {
-      localStorage.removeItem('token')
-      localStorage.removeItem('user')
+      clearToken()
+      try {
+        localStorage.removeItem('user')
+      } catch {
+        // Stockage indisponible
+      }
       window.location.href = '/login'
     }
     if (err.response?.status === 402) {

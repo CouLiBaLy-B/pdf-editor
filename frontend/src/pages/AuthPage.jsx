@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { register, login, getMe } from '../services/api'
+import { register, login, getMe, storeToken } from '../services/api'
 import { useAuth } from '../context/AuthContext'
 import { AppLogo } from '../components/ui/index.js'
 import { Mail, Lock, ArrowRight, Loader2 } from 'lucide-react'
@@ -22,7 +22,7 @@ export default function AuthPage() {
       const { access_token } = mode === 'login'
         ? await login(email, password)
         : await register(email, password, acceptedTerms)
-      localStorage.setItem('token', access_token)
+      storeToken(access_token)
       const userData = await getMe()
       signin(access_token, userData)
       navigate('/app')

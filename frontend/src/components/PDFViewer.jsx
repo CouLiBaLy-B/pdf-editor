@@ -36,6 +36,8 @@ export default function PDFViewer({
 }) {
   const canvasRef = useRef(null)
   const [loading, setLoading] = useState(false)
+  const [error, setError] = useState(null)
+  const [reloadKey, setReloadKey] = useState(0)
   const docRef = useRef(null)
   const renderTaskRef = useRef(null)
   const [docLoaded, setDocLoaded] = useState(0)
@@ -45,12 +47,26 @@ export default function PDFViewer({
   const scale = externalScale !== undefined ? externalScale : internalScale
   const setScale = onScaleChange || setInternalScale
 
+  // Human-readable message for common pdf.js failures
+  const describeError = (err) => {
+    if (!err) return 'Erreur inconnue'
+    if (err?.name === 'PasswordException') return 'Ce PDF est protégé par un mot de passe.'
+    if (err?.name === 'InvalidPDFException') return 'Ce PDF semble corrompu ou non pris en charge.'
+    if (err?.name === 'MissingPDFException') return 'Impossible de télécharger le PDF.'
+    if (err?.name === 'UnexpectedResponseException') return 'Le serveur a renvoyé une réponse inattendue.'
+    if (err?.message && /fetch|network|Failed to fetch/i.test(err.message)) {
+      return 'Impossible de charger le document (problème réseau ou d\'autorisation).'
+    }
+    return err?.message || 'Erreur inconnue'
+  }
+
   // Load the document when URL changes
   useEffect(() => {
     if (!fileUrl) return
     
     let cancelled = false
     setLoading(true)
+    setError(null)
     setDocLoaded(0)
 
     const loadDoc = async () => {
@@ -76,8 +92,12 @@ export default function PDFViewer({
         setDocLoaded(d => d + 1)
       } catch (err) {
         console.error('Erreur chargement PDF:', err)
-        onError?.(err)
-        setLoading(false)
+        const message = describeError(err)
+        if (!cancelled) {
+          setError(message)
+          onError?.(err)
+          setLoading(false)
+        }
       }
     }
     
@@ -90,7 +110,7 @@ export default function PDFViewer({
         docRef.current = null
       }
     }
-  }, [fileUrl, onTotalPages, onError])
+  }, [fileUrl, onTotalPages, onError, reloadKey])
 
   // Render the current page
   useEffect(() => {
@@ -159,6 +179,10 @@ export default function PDFViewer({
       } catch (err) {
         if (err?.name !== 'RenderingCancelledException') {
           console.error('Erreur rendu page:', err)
+          if (!cancelled) {
+            setError(describeError(err))
+            onError?.(err)
+          }
         }
       } finally {
         if (!cancelled) setLoading(false)
@@ -189,6 +213,35 @@ export default function PDFViewer({
     return (
       <div className="flex items-center justify-center h-full text-ink-muted text-sm">
         <p>Importez ou sélectionnez un PDF</p>
+      </div>
+    )
+  }
+
+  // Error state: show a clear message instead of a silent blank area
+  if (error) {
+    return (
+      <div className="flex items-center justify-center min-w-[420px] min-h-[320px]">
+        <div className="bg-white border border-border rounded-xl shadow-card p-6 max-w-sm text-center">
+          <div className="w-10 h-10 mx-auto rounded-full bg-red-50 border border-red-100 flex items-center justify-center mb-3">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#dc2626" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="10" />
+              <line x1="12" y1="8" x2="12" y2="12" />
+              <line x1="12" y1="16" x2="12.01" y2="16" />
+            </svg>
+          </div>
+          <p className="text-sm font-semibold text-ink">Impossible d'afficher ce PDF</p>
+          <p className="text-xs text-ink-muted mt-1.5 leading-relaxed">{error}</p>
+          <button
+            onClick={() => { setError(null); setReloadKey(k => k + 1) }}
+            className="mt-4 inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-semibold text-white bg-brand hover:bg-brand-dim transition-colors"
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+              <polyline points="21 3 21 9 15 9" />
+            </svg>
+            Réessayer
+          </button>
+        </div>
       </div>
     )
   }

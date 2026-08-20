@@ -124,19 +124,34 @@ export default function EditorPage() {
   const onDrop = useCallback(async (acceptedFiles, rejectedFiles = []) => {
     if (rejectedFiles.length) toast.error('Seuls les fichiers PDF sont acceptés')
     let imported = 0
+    let firstUploaded = null
     for (const file of acceptedFiles) {
       try {
-        await uploadFile(file)
+        const uploaded = await uploadFile(file)
         imported += 1
+        if (!firstUploaded) firstUploaded = uploaded
       } catch (error) {
         toast.error(`${file.name} : ${error.response?.data?.detail || 'import impossible'}`)
       }
     }
     if (imported) {
-      await refresh()
       toast.success(`${imported} document${imported > 1 ? 's' : ''} importé${imported > 1 ? 's' : ''}`)
+      // Ouvre automatiquement le premier document importé pour que
+      // le PDF s'affiche immédiatement dans le visualiseur.
+      if (firstUploaded) {
+        let f = firstUploaded
+        try {
+          const data = await refresh()
+          f = (data || []).find(x => x.id === firstUploaded.id) || firstUploaded
+        } catch (_) {
+          // Liste non rafraîchie (réseau) : on ouvre quand même le fichier
+        }
+        handleSelectFile(f)
+      } else {
+        await refresh()
+      }
     }
-  }, [refresh])
+  }, [refresh, handleSelectFile])
 
   const { getRootProps, getInputProps, isDragActive, open } = useDropzone({
     onDrop,
