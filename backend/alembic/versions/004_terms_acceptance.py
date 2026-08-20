@@ -14,9 +14,14 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column("users", sa.Column("terms_accepted_at", sa.DateTime(), nullable=True))
-    op.add_column("users", sa.Column("token_version", sa.Integer(), nullable=False, server_default="0"))
-
+    # Idempotence : ne pas recréer les colonnes si une base existante les contient déjà.
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    columns = {c["name"] for c in inspector.get_columns("users")}
+    if "terms_accepted_at" not in columns:
+        op.add_column("users", sa.Column("terms_accepted_at", sa.DateTime(), nullable=True))
+    if "token_version" not in columns:
+        op.add_column("users", sa.Column("token_version", sa.Integer(), nullable=False, server_default="0"))
 
 def downgrade() -> None:
     op.drop_column("users", "token_version")

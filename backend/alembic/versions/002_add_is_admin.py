@@ -14,8 +14,12 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column('users', sa.Column('is_admin', sa.Integer(), nullable=False, server_default='0'))
-
+    # Idempotence : ne pas recréer la colonne si une base existante la contient déjà.
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    columns = {c["name"] for c in inspector.get_columns("users")}
+    if "is_admin" not in columns:
+        op.add_column('users', sa.Column('is_admin', sa.Integer(), nullable=False, server_default='0'))
 
 def downgrade() -> None:
     op.drop_column('users', 'is_admin')
